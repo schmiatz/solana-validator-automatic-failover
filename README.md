@@ -70,14 +70,16 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 ### Overview
 
 1. **Startup**: Check if local node (hot spare) is healthy
-2. **Delinquency check**: Check if monitored vote account is delinquent
+2. **Initial delinquency check**: Check if monitored vote account is already delinquent
    - If delinquent → retry 2x (1s apart) → trigger failover
-3. **Continuous monitoring** (if `--max-vote-latency` set): Check vote latency every second
-   - If latency exceeds threshold → retry 2x (1s apart) → trigger failover
+3. **Continuous monitoring**: Check vote account status every second
+   - Always monitors for delinquency
+   - If `--max-vote-latency` is set, also triggers failover when latency exceeds threshold
+   - Any issue detected → retry 2x (1s apart) → trigger failover
 
-### Why only check delinquency once at startup?
+### Why use `--max-vote-latency`?
 
-A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency 50`, the failover triggers long before delinquency would occur. There's no way to jump from 1 slot behind to delinquent instantly.
+A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency 50`, the failover triggers long before delinquency would occur — giving you faster response to issues.
 
 ---
 

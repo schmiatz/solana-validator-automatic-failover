@@ -152,14 +152,16 @@ func (c *Checker) probeGossipPort(address string) bool {
 
 // LocalCheckResult contains the result of a local node health check
 type LocalCheckResult struct {
-	Identity string
-	Healthy  bool
-	Gossip   *GossipInfo
-	Error    error
+	Identity   string
+	ClientType string
+	Version    string
+	Healthy    bool
+	Gossip     *GossipInfo
+	Error      error
 }
 
 // CheckLocal performs a health check on the local node (hot spare)
-// This checks: getHealth, getIdentity, and gossip status
+// Uses batch RPC to get identity, version, and cluster nodes in one call
 func (c *Checker) CheckLocal() (*LocalCheckResult, error) {
 	result := &LocalCheckResult{}
 
@@ -171,16 +173,47 @@ func (c *Checker) CheckLocal() (*LocalCheckResult, error) {
 	}
 	result.Healthy = true
 
-	// Get node identity
-	identity, err := c.client.GetIdentity()
+	// Get node info in a single batch request (identity, version, cluster nodes)
+	nodeInfo, err := c.client.GetNodeInfo()
 	if err != nil {
-		result.Error = fmt.Errorf("failed to get identity: %w", err)
+		result.Error = fmt.Errorf("failed to get node info: %w", err)
 		return result, result.Error
 	}
-	result.Identity = identity
 
-	// Check gossip status for this node
-	result.Gossip = c.checkGossipStatus(identity)
+	result.Identity = nodeInfo.Identity
+	result.ClientType = nodeInfo.ClientType
+	result.Version = nodeInfo.Version
+
+	// Check gossip status using cluster nodes from batch response
+	result.Gossip = c.checkGossipStatusFromNodes(nodeInfo.Identity, nodeInfo.ClusterNodes)
 
 	return result, nil
+}
+
+// checkGossipStatusFromNodes checks gossip status using pre-fetched cluster nodes
+func (c *Checker) checkGossipStatusFromNodes(nodePubkey string, nodes []rpc.ClusterNode) *GossipInfo {
+	info := &GossipInfo{
+		NodePubkey: nodePubkey,
+	}
+
+	if nodes == nil {
+		return info
+	}
+
+	// Find our node in the gossip list
+	for _, node := range nodes {
+		if node.Pubkey == nodePubkey {
+			info.InGossip = true
+			if node.Gossip != nil {
+				info.GossipAddress = *node.Gossip
+				// Probe the gossip port to check if node is actually alive
+				info.TCPReachable = c.probeGossipPort(*node.Gossip)
+			}
+			return info
+		}
+	}
+
+	// Node not found in gossip
+	info.InGossip = false
+	return info
 }

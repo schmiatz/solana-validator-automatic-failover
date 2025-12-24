@@ -227,6 +227,61 @@ func (c *Client) GetVoteAccountWithSlot(votePubkey string) (*VoteAccountWithSlot
 	return result, nil
 }
 
+// NodeInfo contains basic node information from batch call
+type NodeInfo struct {
+	Identity      string
+	ClientType    string
+	Version       string
+	ClusterNodes  []ClusterNode
+}
+
+// GetNodeInfo fetches identity, version, and cluster nodes in a single batch request
+func (c *Client) GetNodeInfo() (*NodeInfo, error) {
+	requests := []Request{
+		{JSONRPC: "2.0", ID: 1, Method: "getIdentity", Params: nil},
+		{JSONRPC: "2.0", ID: 2, Method: "getVersion", Params: nil},
+		{JSONRPC: "2.0", ID: 3, Method: "getClusterNodes", Params: nil},
+	}
+
+	responses, err := c.BatchCall(requests)
+	if err != nil {
+		return nil, err
+	}
+
+	info := &NodeInfo{}
+
+	for _, resp := range responses {
+		if resp.Error != nil {
+			continue // Skip errors, we'll handle missing data
+		}
+
+		switch resp.ID {
+		case 1: // getIdentity
+			var identity IdentityResult
+			if err := json.Unmarshal(resp.Result, &identity); err == nil {
+				info.Identity = identity.Identity
+			}
+		case 2: // getVersion
+			var version VersionResult
+			if err := json.Unmarshal(resp.Result, &version); err == nil {
+				if version.SolanaCore != "" {
+					info.ClientType = "Agave"
+					info.Version = version.SolanaCore
+				} else {
+					info.ClientType = "Unknown"
+				}
+			}
+		case 3: // getClusterNodes
+			var nodes []ClusterNode
+			if err := json.Unmarshal(resp.Result, &nodes); err == nil {
+				info.ClusterNodes = nodes
+			}
+		}
+	}
+
+	return info, nil
+}
+
 // GetHealth checks if the node is healthy
 func (c *Client) GetHealth() error {
 	_, err := c.Call("getHealth", nil)

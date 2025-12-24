@@ -89,22 +89,17 @@ func main() {
 		log.Fatalf("Failed waiting for node health: %v", err)
 	}
 
-	// Detect node type and version
-	clientType, version, err := localClient.DetectNodeType()
-	if err != nil {
-		log.Printf("Warning: Could not detect node type: %v", err)
-	} else {
-		log.Printf("Client: %s", clientType)
-		log.Printf("Version: %s", version)
-	}
-
-	log.Println("Performing detailed health check...")
-
-	// Perform detailed health check of local node
+	// Perform detailed health check of local node (batched: identity, version, cluster nodes)
 	localResult, err := checker.CheckLocal()
 	if err != nil {
 		log.Printf("Health check failed: %v", err)
 	} else {
+		// Display node info
+		if localResult.ClientType != "" {
+			log.Printf("Client: %s", localResult.ClientType)
+			log.Printf("Version: %s", localResult.Version)
+		}
+
 		log.Printf("Local node health check result:")
 		log.Printf("  Identity: %s", localResult.Identity)
 		log.Printf("  Healthy: %v (from getHealth RPC)", localResult.Healthy)

@@ -1,10 +1,14 @@
 # Automatic Failover for Solana Validators
 
-> ⚠️ **WARNING: WORK IN PROGRESS** ⚠️
+> 🚨 **CRITICAL: MAIN NODE MUST BOOT WITH UNSTAKED IDENTITY** 🚨
 >
-> This project is under active development and is **not ready for production use**.
-> Do not use this on mainnet validators. The failover logic is incomplete and
-> could cause unintended behavior. Use at your own risk.
+> Before using this tool, you **MUST** ensure your **main/primary validator** is configured to always boot with an **unstaked identity keypair**.
+>
+> **Why?** When failover occurs, this tool executes a `set-identity` command which may kill/restart the main node. If the main node restarts with the staked identity, it will immediately conflict with the spare node that just took over — potentially killing the spare and causing a failover loop.
+>
+> **Solution:** Configure your main validator's startup script/service to use a **different, unstaked identity keypair** at boot. Only switch to the staked identity after manual verification or via a separate identity-switch mechanism.
+>
+> **Failure to do this correctly can result in both nodes fighting over the staked identity and extended validator downtime.**
 
 ---
 
@@ -240,6 +244,5 @@ automatic-failover/
 ├── internal/
 │   ├── rpc/client.go         # Solana JSON-RPC client
 │   └── health/checker.go     # Health checking logic
-├── bin/failover              # Compiled binary
-└── check_delinquent.sh       # Bash script version (legacy)
+└── bin/failover              # Compiled binary
 ```

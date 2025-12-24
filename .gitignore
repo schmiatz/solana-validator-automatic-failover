@@ -5,6 +5,9 @@ bin/
 *.so
 *.dylib
 
+# Shell scripts
+*.sh
+
 # Test binary
 *.test
 

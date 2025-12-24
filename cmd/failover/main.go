@@ -151,7 +151,11 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) boo
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, err := checker.Check(votePubkey)
 		if err != nil {
-			log.Printf("Attempt %d/%d: Error checking vote account: %v", attempt, maxAttempts, err)
+			if attempt == 1 {
+				log.Printf("Error checking vote account: %v", err)
+			} else {
+				log.Printf("Attempt %d/%d: Error checking vote account: %v", attempt, maxAttempts, err)
+			}
 			if attempt < maxAttempts {
 				time.Sleep(retryInterval)
 			}
@@ -159,14 +163,17 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) boo
 		}
 
 		if !result.Delinquent {
-			log.Printf("Attempt %d/%d: Vote account is NOT delinquent (slots behind: %d)",
-				attempt, maxAttempts, result.SlotsBehind)
+			log.Printf("Vote account is NOT delinquent (slots behind: %d)", result.SlotsBehind)
 			return false
 		}
 
 		delinquentCount++
-		log.Printf("Attempt %d/%d: Vote account IS DELINQUENT (slots behind: %d)",
-			attempt, maxAttempts, result.SlotsBehind)
+		if attempt == 1 {
+			log.Printf("Vote account IS DELINQUENT (slots behind: %d)", result.SlotsBehind)
+		} else {
+			log.Printf("Attempt %d/%d: Vote account IS DELINQUENT (slots behind: %d)",
+				attempt, maxAttempts, result.SlotsBehind)
+		}
 
 		if attempt < maxAttempts {
 			log.Printf("Retrying in %v...", retryInterval)
@@ -189,7 +196,11 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, err := checker.Check(votePubkey)
 		if err != nil {
-			log.Printf("Attempt %d/%d: Error checking vote account: %v", attempt, maxAttempts, err)
+			if attempt == 1 {
+				log.Printf("Error checking vote account: %v", err)
+			} else {
+				log.Printf("Attempt %d/%d: Error checking vote account: %v", attempt, maxAttempts, err)
+			}
 			if attempt < maxAttempts {
 				time.Sleep(retryInterval)
 			}
@@ -197,14 +208,17 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 		}
 
 		if result.SlotsBehind <= maxLatency {
-			log.Printf("Attempt %d/%d: Vote latency OK (slots behind: %d, threshold: %d)",
-				attempt, maxAttempts, result.SlotsBehind, maxLatency)
+			log.Printf("Vote latency OK (slots behind: %d, threshold: %d)", result.SlotsBehind, maxLatency)
 			return false
 		}
 
 		exceededCount++
-		log.Printf("Attempt %d/%d: Vote latency EXCEEDED (slots behind: %d, threshold: %d)",
-			attempt, maxAttempts, result.SlotsBehind, maxLatency)
+		if attempt == 1 {
+			log.Printf("Vote latency EXCEEDED (slots behind: %d, threshold: %d)", result.SlotsBehind, maxLatency)
+		} else {
+			log.Printf("Attempt %d/%d: Vote latency EXCEEDED (slots behind: %d, threshold: %d)",
+				attempt, maxAttempts, result.SlotsBehind, maxLatency)
+		}
 
 		if attempt < maxAttempts {
 			log.Printf("Retrying in %v...", retryInterval)

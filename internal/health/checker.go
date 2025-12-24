@@ -80,55 +80,33 @@ type CheckResult struct {
 }
 
 // Check performs a comprehensive health check (for vote account monitoring)
+// Uses batch RPC call to get vote accounts and current slot atomically
 func (c *Checker) Check(votePubkey string) (*CheckResult, error) {
 	result := &CheckResult{}
 
-	// Get current slot with confirmed commitment
-	currentSlot, err := c.client.GetSlot("confirmed")
+	// Get vote account info and current slot in a single batch request
+	// This ensures accurate slots-behind calculation
+	voteInfo, err := c.client.GetVoteAccountWithSlot(votePubkey)
 	if err != nil {
-		result.Error = fmt.Errorf("failed to get current slot: %w", err)
-		return result, result.Error
-	}
-	result.CurrentSlot = currentSlot
-
-	// Get vote accounts
-	voteAccounts, err := c.client.GetVoteAccounts(votePubkey, "confirmed")
-	if err != nil {
-		result.Error = fmt.Errorf("failed to get vote accounts: %w", err)
+		result.Error = fmt.Errorf("failed to get vote account: %w", err)
 		return result, result.Error
 	}
 
-	// Check if in delinquent list
-	for _, va := range voteAccounts.Delinquent {
-		if va.VotePubkey == votePubkey {
-			result.Delinquent = true
-			result.LastVote = va.LastVote
-			result.SlotsBehind = int64(currentSlot) - int64(va.LastVote)
-			result.Healthy = false
-
-			// Check gossip status for delinquent node
-			result.Gossip = c.checkGossipStatus(va.NodePubkey)
-			return result, nil
-		}
+	if !voteInfo.Found {
+		result.Error = fmt.Errorf("vote account %s not found", votePubkey)
+		return result, result.Error
 	}
 
-	// Check if in current (healthy) list
-	for _, va := range voteAccounts.Current {
-		if va.VotePubkey == votePubkey {
-			result.LastVote = va.LastVote
-			result.SlotsBehind = int64(currentSlot) - int64(va.LastVote)
-			result.Healthy = true
-			result.Delinquent = false
+	result.CurrentSlot = voteInfo.CurrentSlot
+	result.LastVote = voteInfo.LastVote
+	result.SlotsBehind = voteInfo.SlotsBehind
+	result.Delinquent = voteInfo.Delinquent
+	result.Healthy = !voteInfo.Delinquent
 
-			// Check gossip status for healthy node
-			result.Gossip = c.checkGossipStatus(va.NodePubkey)
-			return result, nil
-		}
-	}
+	// Check gossip status
+	result.Gossip = c.checkGossipStatus(voteInfo.NodePubkey)
 
-	// Vote account not found in either list
-	result.Error = fmt.Errorf("vote account %s not found", votePubkey)
-	return result, result.Error
+	return result, nil
 }
 
 // checkGossipStatus checks if a node is visible in gossip and if its gossip port is reachable

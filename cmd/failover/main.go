@@ -136,10 +136,12 @@ func main() {
 }
 
 // checkDelinquencyWithRetries checks if vote account is delinquent with 2 retries (1 second apart)
-// Returns true if still delinquent after all retries
+// Returns true if confirmed delinquent after all retries, false if recovered or on errors
 func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) bool {
 	const maxAttempts = 3
 	const retryInterval = 1 * time.Second
+
+	delinquentCount := 0
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, err := checker.Check(votePubkey)
@@ -152,13 +154,14 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) boo
 		}
 
 		if !result.Delinquent {
-			log.Printf("Attempt %d/%d: Vote account is NOT delinquent (last vote: %d, slots behind: %d)",
-				attempt, maxAttempts, result.LastVote, result.SlotsBehind)
+			log.Printf("Attempt %d/%d: Vote account is NOT delinquent (slots behind: %d)",
+				attempt, maxAttempts, result.SlotsBehind)
 			return false
 		}
 
-		log.Printf("Attempt %d/%d: Vote account IS DELINQUENT (last vote: %d, slots behind: %d)",
-			attempt, maxAttempts, result.LastVote, result.SlotsBehind)
+		delinquentCount++
+		log.Printf("Attempt %d/%d: Vote account IS DELINQUENT (slots behind: %d)",
+			attempt, maxAttempts, result.SlotsBehind)
 
 		if attempt < maxAttempts {
 			log.Printf("Retrying in %v...", retryInterval)
@@ -166,14 +169,17 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) boo
 		}
 	}
 
-	return true
+	// Only trigger if we confirmed delinquency at least once
+	return delinquentCount > 0
 }
 
 // checkLatencyWithRetries checks if vote latency exceeds threshold with 2 retries (1 second apart)
-// Returns true if still exceeds threshold after all retries
+// Returns true if confirmed exceeded after all retries, false if recovered or on errors
 func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLatency int64) bool {
 	const maxAttempts = 3
 	const retryInterval = 1 * time.Second
+
+	exceededCount := 0
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, err := checker.Check(votePubkey)
@@ -191,6 +197,7 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 			return false
 		}
 
+		exceededCount++
 		log.Printf("Attempt %d/%d: Vote latency EXCEEDED (slots behind: %d, threshold: %d)",
 			attempt, maxAttempts, result.SlotsBehind, maxLatency)
 
@@ -200,7 +207,8 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 		}
 	}
 
-	return true
+	// Only trigger if we confirmed latency exceeded at least once
+	return exceededCount > 0
 }
 
 // monitorVoteAccount continuously monitors vote account for delinquency and latency
@@ -213,7 +221,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 	if maxLatency > 0 {
 		log.Printf("Monitoring every %v (latency threshold: %d slots)...", checkInterval, maxLatency)
 	} else {
-		log.Printf("Monitoring every %v (latency threshold: disabled, delinquency only)...", checkInterval)
+		log.Printf("Monitoring every %v (delinquency only)...", checkInterval)
 	}
 
 	for {
@@ -228,9 +236,13 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 				continue
 			}
 
+			// Always print current status
+			log.Printf("Current slot: %d | Last vote: %d | Slots behind: %d",
+				result.CurrentSlot, result.LastVote, result.SlotsBehind)
+
 			// Check for delinquency
 			if result.Delinquent {
-				log.Printf("WARNING: Vote account is DELINQUENT! (slots behind: %d)", result.SlotsBehind)
+				log.Printf("WARNING: Vote account is DELINQUENT!")
 
 				// Verify with retries before triggering failover
 				if checkDelinquencyWithRetries(checker, votePubkey) {
@@ -243,8 +255,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 
 			// Check latency threshold (if set)
 			if maxLatency > 0 && result.SlotsBehind > maxLatency {
-				log.Printf("WARNING: Vote latency threshold exceeded! (slots behind: %d, threshold: %d)",
-					result.SlotsBehind, maxLatency)
+				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", maxLatency)
 
 				// Verify with retries before triggering failover
 				if checkLatencyWithRetries(checker, votePubkey, maxLatency) {

@@ -98,6 +98,135 @@ func (c *Client) Call(method string, params interface{}) (json.RawMessage, error
 	return rpcResp.Result, nil
 }
 
+// BatchCall makes multiple JSON-RPC calls in a single HTTP request
+func (c *Client) BatchCall(requests []Request) ([]Response, error) {
+	body, err := json.Marshal(requests)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal batch request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var batchResp []Response
+	if err := json.Unmarshal(respBody, &batchResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal batch response: %w", err)
+	}
+
+	return batchResp, nil
+}
+
+// VoteAccountWithSlot contains vote account info and current slot from a batch call
+type VoteAccountWithSlot struct {
+	CurrentSlot  uint64
+	LastVote     uint64
+	SlotsBehind  int64
+	Delinquent   bool
+	NodePubkey   string
+	VotePubkey   string
+	Found        bool
+}
+
+// GetVoteAccountWithSlot fetches vote account info and current slot in a single batch request
+// This ensures accurate slots-behind calculation by getting both values atomically
+func (c *Client) GetVoteAccountWithSlot(votePubkey string) (*VoteAccountWithSlot, error) {
+	requests := []Request{
+		{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "getVoteAccounts",
+			Params:  []interface{}{map[string]interface{}{"votePubkey": votePubkey, "commitment": "confirmed"}},
+		},
+		{
+			JSONRPC: "2.0",
+			ID:      2,
+			Method:  "getSlot",
+			Params:  []interface{}{map[string]interface{}{"commitment": "confirmed"}},
+		},
+	}
+
+	responses, err := c.BatchCall(requests)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(responses) != 2 {
+		return nil, fmt.Errorf("expected 2 responses, got %d", len(responses))
+	}
+
+	result := &VoteAccountWithSlot{VotePubkey: votePubkey}
+
+	// Parse getVoteAccounts response (ID 1)
+	var voteAccountsResp *VoteAccountsResult
+	for _, resp := range responses {
+		if resp.ID == 1 {
+			if resp.Error != nil {
+				return nil, fmt.Errorf("getVoteAccounts error: %s", resp.Error.Message)
+			}
+			if err := json.Unmarshal(resp.Result, &voteAccountsResp); err != nil {
+				return nil, fmt.Errorf("failed to parse vote accounts: %w", err)
+			}
+		} else if resp.ID == 2 {
+			if resp.Error != nil {
+				return nil, fmt.Errorf("getSlot error: %s", resp.Error.Message)
+			}
+			if err := json.Unmarshal(resp.Result, &result.CurrentSlot); err != nil {
+				return nil, fmt.Errorf("failed to parse slot: %w", err)
+			}
+		}
+	}
+
+	if voteAccountsResp == nil {
+		return nil, fmt.Errorf("missing vote accounts response")
+	}
+
+	// Check delinquent list first
+	for _, va := range voteAccountsResp.Delinquent {
+		if va.VotePubkey == votePubkey {
+			result.Found = true
+			result.Delinquent = true
+			result.LastVote = va.LastVote
+			result.NodePubkey = va.NodePubkey
+			result.SlotsBehind = int64(result.CurrentSlot) - int64(va.LastVote)
+			return result, nil
+		}
+	}
+
+	// Check current (healthy) list
+	for _, va := range voteAccountsResp.Current {
+		if va.VotePubkey == votePubkey {
+			result.Found = true
+			result.Delinquent = false
+			result.LastVote = va.LastVote
+			result.NodePubkey = va.NodePubkey
+			result.SlotsBehind = int64(result.CurrentSlot) - int64(va.LastVote)
+			return result, nil
+		}
+	}
+
+	// Not found
+	result.Found = false
+	return result, nil
+}
+
 // GetHealth checks if the node is healthy
 func (c *Client) GetHealth() error {
 	_, err := c.Call("getHealth", nil)

@@ -112,7 +112,7 @@ The tool performs the following checks on the **local node** to verify it's read
 **RPC Method:** `getVersion`
 
 **What it checks:**
-- What software is the node running (Agave, Firedancer)?
+- What software is the node running (Agave/Jito, Frankendancer)?
 - What version is installed?
 
 ```

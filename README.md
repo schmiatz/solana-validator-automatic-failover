@@ -1,5 +1,13 @@
 # Automatic Failover for Solana Validators
 
+> ⚠️ **WARNING: WORK IN PROGRESS** ⚠️
+>
+> This project is under active development and is **not ready for production use**.
+> Do not use this on mainnet validators. The failover logic is incomplete and
+> could cause unintended behavior. Use at your own risk.
+
+---
+
 A tool to monitor Solana validator health and trigger automatic failover when issues are detected. Designed to run on a **hot spare validator** that waits to take over if the primary fails.
 
 ## Usage

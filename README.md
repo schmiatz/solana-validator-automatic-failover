@@ -1,8 +1,8 @@
 # Automatic Failover for Solana Validators
 
-> 🚨 **CRITICAL: MAIN NODE MUST BOOT WITH UNSTAKED IDENTITY** 🚨
+> 🚨 **CRITICAL: MAIN NODE MUST NOT RESTART WITH STAKED IDENTITY** 🚨
 >
-> Before using this tool, you **MUST** ensure your **main/primary validator** is configured to always boot with an **unstaked identity keypair**.
+> Before using this tool, you **MUST** ensure your **main/primary validator** is configured to not reboot with its staked identity keypair.
 >
 > **Why?** When failover occurs, this tool executes a `set-identity` command which may kill/restart the main node. If the main node restarts with the staked identity, it will immediately conflict with the spare node that just took over — potentially killing the spare and causing a failover loop.
 >

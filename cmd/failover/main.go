@@ -131,12 +131,8 @@ func main() {
 
 	log.Println("Vote account is not delinquent, starting continuous monitoring...")
 
-	// Step 3: Continuous monitoring for vote latency (if threshold is set)
-	if config.MaxVoteLatency > 0 {
-		monitorVoteLatency(ctx, checker, config.VotePubkey, config.MaxVoteLatency)
-	} else {
-		log.Println("No --max-vote-latency set, monitoring disabled. Exiting.")
-	}
+	// Step 3: Continuous monitoring
+	monitorVoteAccount(ctx, checker, config.VotePubkey, config.MaxVoteLatency)
 }
 
 // checkDelinquencyWithRetries checks if vote account is delinquent with 2 retries (1 second apart)
@@ -207,14 +203,18 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 	return true
 }
 
-// monitorVoteLatency continuously monitors vote latency and triggers failover if threshold exceeded
-func monitorVoteLatency(ctx context.Context, checker *health.Checker, votePubkey string, maxLatency int64) {
+// monitorVoteAccount continuously monitors vote account for delinquency and latency
+func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey string, maxLatency int64) {
 	const checkInterval = 1 * time.Second
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	log.Printf("Monitoring vote latency every %v (threshold: %d slots)...", checkInterval, maxLatency)
+	if maxLatency > 0 {
+		log.Printf("Monitoring every %v (latency threshold: %d slots)...", checkInterval, maxLatency)
+	} else {
+		log.Printf("Monitoring every %v (latency threshold: disabled, delinquency only)...", checkInterval)
+	}
 
 	for {
 		select {
@@ -228,7 +228,21 @@ func monitorVoteLatency(ctx context.Context, checker *health.Checker, votePubkey
 				continue
 			}
 
-			if result.SlotsBehind > maxLatency {
+			// Check for delinquency
+			if result.Delinquent {
+				log.Printf("WARNING: Vote account is DELINQUENT! (slots behind: %d)", result.SlotsBehind)
+
+				// Verify with retries before triggering failover
+				if checkDelinquencyWithRetries(checker, votePubkey) {
+					triggerFailover("vote account is delinquent")
+					return
+				}
+				log.Println("Delinquency recovered, continuing monitoring...")
+				continue
+			}
+
+			// Check latency threshold (if set)
+			if maxLatency > 0 && result.SlotsBehind > maxLatency {
 				log.Printf("WARNING: Vote latency threshold exceeded! (slots behind: %d, threshold: %d)",
 					result.SlotsBehind, maxLatency)
 

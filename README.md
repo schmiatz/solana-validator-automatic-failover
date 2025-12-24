@@ -13,28 +13,46 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 ## Usage
 
 ```bash
-./bin/failover [--rpc <RPC_URL>]
+./bin/failover --votepubkey <VOTE_PUBKEY> [options]
 ```
 
 ### Parameters
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
+| `--votepubkey` | **Yes** | - | Vote account public key to monitor |
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
+| `--max-vote-latency` | No | `0` (disabled) | Max slots behind before triggering failover |
 | `--log` | No | - | Path to log file (logs to stdout and file if set) |
 
 ### Example
 
 ```bash
-# Monitor local validator (production)
-./bin/failover
+# Monitor a vote account (basic - only checks delinquency at startup)
+./bin/failover --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
 
-# Use a custom RPC endpoint
-./bin/failover --rpc http://localhost:8899
+# Monitor with vote latency threshold (triggers failover if >50 slots behind)
+./bin/failover --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA --max-vote-latency 50
 
-# Log to file (output goes to both stdout and file)
-./bin/failover --log /home/solana/failover.log
+# Full production setup with logging
+./bin/failover --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA --max-vote-latency 50 --log /home/solana/failover.log
 ```
+
+---
+
+## How It Works
+
+### Overview
+
+1. **Startup**: Check if local node (hot spare) is healthy
+2. **Delinquency check**: Check if monitored vote account is delinquent
+   - If delinquent → retry 2x (1s apart) → trigger failover
+3. **Continuous monitoring** (if `--max-vote-latency` set): Check vote latency every second
+   - If latency exceeds threshold → retry 2x (1s apart) → trigger failover
+
+### Why only check delinquency once at startup?
+
+A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency 50`, the failover triggers long before delinquency would occur. There's no way to jump from 1 slot behind to delinquent instantly.
 
 ---
 
@@ -155,13 +173,14 @@ The tool performs the following checks on the **local node** to verify it's read
 
 ---
 
-## Failover Triggers (Planned)
+## Failover Triggers
 
-The following conditions would trigger a failover:
+The following conditions trigger a failover:
 
-1. **Primary becomes unhealthy:** Primary validator's `getHealth` returns unhealthy
-2. **Gossip unreachable:** Cannot connect to primary's gossip port (node offline)
-3. **Slots behind threshold:** Primary is behind by more than N slots (configurable)
+1. **Delinquent:** Vote account is marked delinquent at startup (checked 3 times, 1s apart)
+2. **Vote latency exceeded:** Vote account is behind by more than `--max-vote-latency` slots (checked 3 times, 1s apart)
+
+When triggered, the tool will execute the set-identity command (currently placeholder, implementation pending).
 
 ---
 

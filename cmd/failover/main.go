@@ -120,7 +120,7 @@ func main() {
 	requiredCmd := getRequiredCommand(localResult.ClientType)
 	if requiredCmd != "" {
 		if !isCommandAvailable(requiredCmd) {
-			log.Fatalf("Error: Required command '%s' not found in PATH. Please install it or add it to your PATH.", requiredCmd)
+			log.Fatalf("Error: Required command '%s' not found in PATH", requiredCmd)
 		}
 		log.Printf("Required command '%s' found in PATH", requiredCmd)
 	}

@@ -13,7 +13,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 ## Usage
 
 ```bash
-./bin/failover --votepubkey <VOTE_PUBKEY> [options]
+./bin/failover --votepubkey <VOTE_PUBKEY> --identity-keypair <PATH> [options]
 ```
 
 ### Parameters
@@ -21,6 +21,9 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `--votepubkey` | **Yes** | - | Vote account public key to monitor |
+| `--identity-keypair` | **Yes** | - | Path to identity keypair JSON file (for set-identity command) |
+| `--config` | **Frankendancer only** | - | Path to config.toml (required for Frankendancer nodes) |
+| `--ledger` | **Agave only** | - | Path to validator ledger directory (required for Agave nodes) |
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
 | `--max-vote-latency` | No | `0` (disabled) | Max slots behind before triggering failover |
 | `--log` | No | - | Path to log file (logs to stdout and file if set) |
@@ -28,14 +31,32 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 ### Example
 
 ```bash
-# Monitor a vote account (basic - only checks delinquency at startup)
-./bin/failover --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
+# Frankendancer node
+./bin/failover \
+  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
+  --identity-keypair /home/solana/identity.json \
+  --config /home/solana/config.toml
 
-# Monitor with vote latency threshold (triggers failover if >50 slots behind)
-./bin/failover --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA --max-vote-latency 50
+# Agave node
+./bin/failover \
+  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
+  --identity-keypair /home/solana/identity.json \
+  --ledger /home/solana/validator-ledger
+
+# With vote latency threshold (triggers failover if >50 slots behind)
+./bin/failover \
+  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
+  --identity-keypair /home/solana/identity.json \
+  --config /home/solana/config.toml \
+  --max-vote-latency 50
 
 # Full production setup with logging
-./bin/failover --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA --max-vote-latency 50 --log /home/solana/failover.log
+./bin/failover \
+  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
+  --identity-keypair /home/solana/identity.json \
+  --config /home/solana/config.toml \
+  --max-vote-latency 50 \
+  --log /home/solana/failover.log
 ```
 
 ---
@@ -180,7 +201,19 @@ The following conditions trigger a failover:
 1. **Delinquent:** Vote account is marked delinquent at startup (checked 3 times, 1s apart)
 2. **Vote latency exceeded:** Vote account is behind by more than `--max-vote-latency` slots (checked 3 times, 1s apart)
 
-When triggered, the tool will execute the set-identity command (currently placeholder, implementation pending).
+### Failover Commands
+
+When triggered, the tool executes the appropriate set-identity command:
+
+**Frankendancer:**
+```bash
+fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json>
+```
+
+**Agave:**
+```bash
+agave-validator --ledger <path/to/validator-ledger> set-identity <path/to/keypair.json>
+```
 
 ---
 

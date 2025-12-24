@@ -21,6 +21,10 @@ type Config struct {
 	LogFile          string
 	VotePubkey       string
 	MaxVoteLatency   int64
+	IdentityKeypair  string
+	ConfigPath       string // For Frankendancer
+	LedgerPath       string // For Agave
+	ClientType       string // Detected client type (Agave/Frankendancer)
 }
 
 func main() {
@@ -29,11 +33,17 @@ func main() {
 	logFile := flag.String("log", "", "Path to log file (logs to stdout and file if set)")
 	votePubkey := flag.String("votepubkey", "", "Vote account public key to monitor (required)")
 	maxVoteLatency := flag.Int64("max-vote-latency", 0, "Max slots behind before triggering failover (0 = disabled)")
+	identityKeypair := flag.String("identity-keypair", "", "Path to identity keypair JSON file (required)")
+	configPath := flag.String("config", "", "Path to config.toml (required for Frankendancer)")
+	ledgerPath := flag.String("ledger", "", "Path to validator ledger directory (required for Agave)")
 	flag.Parse()
 
 	// Validate required parameters
 	if *votePubkey == "" {
 		log.Fatal("Error: --votepubkey is required")
+	}
+	if *identityKeypair == "" {
+		log.Fatal("Error: --identity-keypair is required")
 	}
 
 	config := Config{
@@ -41,6 +51,9 @@ func main() {
 		LogFile:          *logFile,
 		VotePubkey:       *votePubkey,
 		MaxVoteLatency:   *maxVoteLatency,
+		IdentityKeypair:  *identityKeypair,
+		ConfigPath:       *configPath,
+		LedgerPath:       *ledgerPath,
 	}
 
 	// Set up logging
@@ -96,6 +109,9 @@ func main() {
 		log.Fatalf("Health check failed: %v", err)
 	}
 
+	// Store client type in config
+	config.ClientType = localResult.ClientType
+
 	// Display node info
 	if localResult.ClientType != "" {
 		log.Printf("Client: %s", localResult.ClientType)
@@ -125,19 +141,31 @@ func main() {
 		log.Printf("Required command '%s' found in PATH", requiredCmd)
 	}
 
+	// Validate client-specific parameters
+	switch config.ClientType {
+	case "Frankendancer":
+		if config.ConfigPath == "" {
+			log.Fatal("Error: --config is required for Frankendancer nodes")
+		}
+	case "Agave":
+		if config.LedgerPath == "" {
+			log.Fatal("Error: --ledger is required for Agave nodes")
+		}
+	}
+
 	// Step 3: Check if vote account is delinquent at startup
 	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)
 
 	if checkDelinquencyWithRetries(checker, config.VotePubkey) {
 		// Delinquent after retries, trigger failover
-		triggerFailover("vote account is delinquent")
+		triggerFailover("vote account is delinquent", &config)
 		return
 	}
 
 	log.Println("Vote account is not delinquent, starting continuous monitoring...")
 
 	// Step 3: Continuous monitoring
-	monitorVoteAccount(ctx, checker, config.VotePubkey, config.MaxVoteLatency)
+	monitorVoteAccount(ctx, checker, &config)
 }
 
 // checkDelinquencyWithRetries checks if vote account is delinquent with 2 retries (1 second apart)
@@ -231,14 +259,14 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 }
 
 // monitorVoteAccount continuously monitors vote account for delinquency and latency
-func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey string, maxLatency int64) {
+func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Config) {
 	const checkInterval = 1 * time.Second
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	if maxLatency > 0 {
-		log.Printf("Monitoring every %v (latency threshold: %d slots)...", checkInterval, maxLatency)
+	if config.MaxVoteLatency > 0 {
+		log.Printf("Monitoring every %v (latency threshold: %d slots)...", checkInterval, config.MaxVoteLatency)
 	} else {
 		log.Printf("Monitoring every %v (delinquency only)...", checkInterval)
 	}
@@ -249,7 +277,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 			log.Println("Monitoring stopped due to shutdown signal")
 			return
 		case <-ticker.C:
-			result, err := checker.Check(votePubkey)
+			result, err := checker.Check(config.VotePubkey)
 			if err != nil {
 				log.Printf("Error checking vote account: %v", err)
 				continue
@@ -264,8 +292,8 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 				log.Printf("WARNING: Vote account is DELINQUENT!")
 
 				// Verify with retries before triggering failover
-				if checkDelinquencyWithRetries(checker, votePubkey) {
-					triggerFailover("vote account is delinquent")
+				if checkDelinquencyWithRetries(checker, config.VotePubkey) {
+					triggerFailover("vote account is delinquent", config)
 					return
 				}
 				log.Println("Delinquency recovered, continuing monitoring...")
@@ -273,12 +301,12 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 			}
 
 			// Check latency threshold (if set)
-			if maxLatency > 0 && result.SlotsBehind > maxLatency {
-				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", maxLatency)
+			if config.MaxVoteLatency > 0 && result.SlotsBehind > config.MaxVoteLatency {
+				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
 
 				// Verify with retries before triggering failover
-				if checkLatencyWithRetries(checker, votePubkey, maxLatency) {
-					triggerFailover("vote latency exceeded threshold")
+				if checkLatencyWithRetries(checker, config.VotePubkey, config.MaxVoteLatency) {
+					triggerFailover("vote latency exceeded threshold", config)
 					return
 				}
 				log.Println("Latency recovered, continuing monitoring...")
@@ -288,11 +316,41 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, votePubkey
 }
 
 // triggerFailover executes the failover command
-func triggerFailover(reason string) {
+func triggerFailover(reason string, config *Config) {
 	log.Printf("=== FAILOVER TRIGGERED ===")
 	log.Printf("Reason: %s", reason)
-	log.Printf("I would do the set-identity now")
-	// TODO: Implement actual fdctl set-identity command
+
+	var cmd *exec.Cmd
+	var cmdStr string
+
+	switch config.ClientType {
+	case "Frankendancer":
+		// fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json>
+		cmdStr = "fdctl set-identity --config " + config.ConfigPath + " " + config.IdentityKeypair
+		cmd = exec.Command("fdctl", "set-identity", "--config", config.ConfigPath, config.IdentityKeypair)
+	case "Agave":
+		// agave-validator --ledger </path/to/validator-ledger> set-identity <path/to/keypair.json>
+		cmdStr = "agave-validator --ledger " + config.LedgerPath + " set-identity " + config.IdentityKeypair
+		cmd = exec.Command("agave-validator", "--ledger", config.LedgerPath, "set-identity", config.IdentityKeypair)
+	default:
+		log.Fatalf("Error: Unknown client type '%s', cannot execute failover", config.ClientType)
+	}
+
+	log.Printf("Executing: %s", cmdStr)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Error executing failover command: %v", err)
+		if len(output) > 0 {
+			log.Printf("Command output: %s", string(output))
+		}
+		os.Exit(1)
+	}
+
+	if len(output) > 0 {
+		log.Printf("Command output: %s", string(output))
+	}
+	log.Println("Failover command executed successfully")
 }
 
 // getRequiredCommand returns the required CLI command based on client type

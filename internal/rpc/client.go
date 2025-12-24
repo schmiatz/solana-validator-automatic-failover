@@ -136,13 +136,13 @@ func (c *Client) BatchCall(requests []Request) ([]Response, error) {
 
 // VoteAccountWithSlot contains vote account info and current slot from a batch call
 type VoteAccountWithSlot struct {
-	CurrentSlot  uint64
-	LastVote     uint64
-	SlotsBehind  int64
-	Delinquent   bool
-	NodePubkey   string
-	VotePubkey   string
-	Found        bool
+	CurrentSlot uint64
+	LastVote    uint64
+	SlotsBehind int64
+	Delinquent  bool
+	NodePubkey  string
+	VotePubkey  string
+	Found       bool
 }
 
 // GetVoteAccountWithSlot fetches vote account info and current slot in a single batch request
@@ -229,10 +229,10 @@ func (c *Client) GetVoteAccountWithSlot(votePubkey string) (*VoteAccountWithSlot
 
 // NodeInfo contains basic node information from batch call
 type NodeInfo struct {
-	Identity      string
-	ClientType    string
-	Version       string
-	ClusterNodes  []ClusterNode
+	Identity     string
+	ClientType   string
+	Version      string
+	ClusterNodes []ClusterNode
 }
 
 // GetNodeInfo fetches identity, version, and cluster nodes in a single batch request

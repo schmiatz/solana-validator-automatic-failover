@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -92,30 +93,39 @@ func main() {
 	// Perform detailed health check of local node (batched: identity, version, cluster nodes)
 	localResult, err := checker.CheckLocal()
 	if err != nil {
-		log.Printf("Health check failed: %v", err)
-	} else {
-		// Display node info
-		if localResult.ClientType != "" {
-			log.Printf("Client: %s", localResult.ClientType)
-			log.Printf("Version: %s", localResult.Version)
-		}
+		log.Fatalf("Health check failed: %v", err)
+	}
 
-		log.Printf("Local node health check result:")
-		log.Printf("  Identity: %s", localResult.Identity)
-		log.Printf("  Healthy: %v (from getHealth RPC)", localResult.Healthy)
+	// Display node info
+	if localResult.ClientType != "" {
+		log.Printf("Client: %s", localResult.ClientType)
+		log.Printf("Version: %s", localResult.Version)
+	}
 
-		// Display gossip info if available
-		if localResult.Gossip != nil {
-			log.Printf("  Gossip status:")
-			log.Printf("    In gossip: %v", localResult.Gossip.InGossip)
-			if localResult.Gossip.GossipAddress != "" {
-				log.Printf("    Gossip address: %s", localResult.Gossip.GossipAddress)
-				log.Printf("    TCP reachable: %v", localResult.Gossip.TCPReachable)
-			}
+	log.Printf("Local node health check result:")
+	log.Printf("  Identity: %s", localResult.Identity)
+	log.Printf("  Healthy: %v (from getHealth RPC)", localResult.Healthy)
+
+	// Display gossip info if available
+	if localResult.Gossip != nil {
+		log.Printf("  Gossip status:")
+		log.Printf("    In gossip: %v", localResult.Gossip.InGossip)
+		if localResult.Gossip.GossipAddress != "" {
+			log.Printf("    Gossip address: %s", localResult.Gossip.GossipAddress)
+			log.Printf("    TCP reachable: %v", localResult.Gossip.TCPReachable)
 		}
 	}
 
-	// Step 2: Check if vote account is delinquent at startup
+	// Step 2: Check if required CLI tool is available in PATH
+	requiredCmd := getRequiredCommand(localResult.ClientType)
+	if requiredCmd != "" {
+		if !isCommandAvailable(requiredCmd) {
+			log.Fatalf("Error: Required command '%s' not found in PATH. Please install it or add it to your PATH.", requiredCmd)
+		}
+		log.Printf("Required command '%s' found in PATH", requiredCmd)
+	}
+
+	// Step 3: Check if vote account is delinquent at startup
 	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)
 
 	if checkDelinquencyWithRetries(checker, config.VotePubkey) {
@@ -269,4 +279,22 @@ func triggerFailover(reason string) {
 	log.Printf("Reason: %s", reason)
 	log.Printf("I would do the set-identity now")
 	// TODO: Implement actual fdctl set-identity command
+}
+
+// getRequiredCommand returns the required CLI command based on client type
+func getRequiredCommand(clientType string) string {
+	switch clientType {
+	case "Agave":
+		return "agave-validator"
+	case "Frankendancer":
+		return "fdctl"
+	default:
+		return ""
+	}
+}
+
+// isCommandAvailable checks if a command is available in PATH
+func isCommandAvailable(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
 }

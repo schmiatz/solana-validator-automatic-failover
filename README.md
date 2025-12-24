@@ -187,6 +187,11 @@ When triggered, the tool will execute the set-identity command (currently placeh
 ## Requirements
 
 - **Go 1.21+** (tested with Go 1.21.6)
+- **Validator CLI in PATH** (required for failover command):
+  - **Agave nodes**: `agave-validator` must be in PATH
+  - **Frankendancer nodes**: `fdctl` must be in PATH
+
+The client automatically detects the node type and checks for the appropriate CLI tool.
 
 ## Building
 

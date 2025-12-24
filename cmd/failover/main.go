@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -15,18 +16,36 @@ import (
 // Config holds the application configuration
 type Config struct {
 	LocalRPCEndpoint string
+	LogFile          string
 }
 
 func main() {
 	// Parse command line flags
 	rpcEndpoint := flag.String("rpc", "http://127.0.0.1:58000", "Local RPC endpoint to query")
+	logFile := flag.String("log", "", "Path to log file (logs to stdout and file if set)")
 	flag.Parse()
 
 	config := Config{
 		LocalRPCEndpoint: *rpcEndpoint,
+		LogFile:          *logFile,
 	}
 
+	// Set up logging
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+
+	// If log file is specified, write to both stdout and file
+	if config.LogFile != "" {
+		logFileHandle, err := os.OpenFile(config.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatalf("Failed to open log file %s: %v", config.LogFile, err)
+		}
+		defer logFileHandle.Close()
+
+		// Write to both stdout and log file
+		multiWriter := io.MultiWriter(os.Stdout, logFileHandle)
+		log.SetOutput(multiWriter)
+	}
+
 	log.Println("Starting automatic failover manager...")
 	log.Printf("Local RPC: %s", config.LocalRPCEndpoint)
 

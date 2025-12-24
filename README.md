@@ -21,6 +21,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `--rpc` | No | `http://127.0.0.1:58000` | Local RPC endpoint to query |
+| `--log` | No | - | Path to log file (logs to stdout and file if set) |
 
 ### Example
 
@@ -30,6 +31,9 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 
 # Use a custom RPC endpoint
 ./bin/failover --rpc http://localhost:8899
+
+# Log to file (output goes to both stdout and file)
+./bin/failover --log /home/solana/failover.log
 ```
 
 ---

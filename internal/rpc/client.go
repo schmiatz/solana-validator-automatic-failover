@@ -265,8 +265,14 @@ func (c *Client) GetNodeInfo() (*NodeInfo, error) {
 			var version VersionResult
 			if err := json.Unmarshal(resp.Result, &version); err == nil {
 				if version.SolanaCore != "" {
-					info.ClientType = "Agave"
 					info.Version = version.SolanaCore
+					// Frankendancer versions start with "0." (e.g., 0.806.30102)
+					// Agave versions start with major version (e.g., 2.0.x, 3.1.x)
+					if len(version.SolanaCore) > 2 && version.SolanaCore[:2] == "0." {
+						info.ClientType = "Frankendancer"
+					} else {
+						info.ClientType = "Agave"
+					}
 				} else {
 					info.ClientType = "Unknown"
 				}
@@ -433,11 +439,14 @@ func (c *Client) DetectNodeType() (clientType string, version string, err error)
 		return "", "", err
 	}
 
-	// Check for solana-core key (Agave)
 	if versionInfo.SolanaCore != "" {
+		// Frankendancer versions start with "0." (e.g., 0.806.30102)
+		// Agave versions start with major version (e.g., 2.0.x, 3.1.x)
+		if len(versionInfo.SolanaCore) > 2 && versionInfo.SolanaCore[:2] == "0." {
+			return "Frankendancer", versionInfo.SolanaCore, nil
+		}
 		return "Agave", versionInfo.SolanaCore, nil
 	}
 
-	// If no solana-core, might be Firedancer (needs real node to verify)
 	return "Unknown", "", nil
 }

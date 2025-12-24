@@ -20,7 +20,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `--rpc` | No | `http://127.0.0.1:58000` | Local RPC endpoint to query |
+| `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
 | `--log` | No | - | Path to log file (logs to stdout and file if set) |
 
 ### Example
@@ -144,11 +144,11 @@ The tool performs the following checks on the **local node** to verify it's read
 
 ```
 2025/12/24 12:44:59.202593 Starting automatic failover manager...
-2025/12/24 12:44:59.202719 Local RPC: http://127.0.0.1:58000
+2025/12/24 12:44:59.202719 Local RPC: http://127.0.0.1:8899
 2025/12/24 12:44:59.202944 Checking local node health...
-2025/12/24 12:45:02.205974 Node not healthy yet: failed to make request: Post "http://127.0.0.1:58000": dial tcp 127.0.0.1:58000: connect: connection refused
-2025/12/24 12:45:05.206356 Node not healthy yet: failed to make request: Post "http://127.0.0.1:58000": dial tcp 127.0.0.1:58000: connect: connection refused
-2025/12/24 12:45:08.206463 Node not healthy yet: failed to make request: Post "http://127.0.0.1:58000": dial tcp 127.0.0.1:58000: connect: connection refused
+2025/12/24 12:45:02.205974 Node not healthy yet: failed to make request: Post "http://127.0.0.1:8899": dial tcp 127.0.0.1:8899: connect: connection refused
+2025/12/24 12:45:05.206356 Node not healthy yet: failed to make request: Post "http://127.0.0.1:8899": dial tcp 127.0.0.1:8899: connect: connection refused
+2025/12/24 12:45:08.206463 Node not healthy yet: failed to make request: Post "http://127.0.0.1:8899": dial tcp 127.0.0.1:8899: connect: connection refused
 ```
 
 **Interpretation:** Local node is not responding. The tool will retry every 3 seconds until the node becomes healthy.

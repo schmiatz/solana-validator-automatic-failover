@@ -21,7 +21,7 @@ type Config struct {
 
 func main() {
 	// Parse command line flags
-	rpcEndpoint := flag.String("rpc", "http://127.0.0.1:58000", "Local RPC endpoint to query")
+	rpcEndpoint := flag.String("rpc", "http://127.0.0.1:8899", "Local RPC endpoint to query")
 	logFile := flag.String("log", "", "Path to log file (logs to stdout and file if set)")
 	flag.Parse()
 

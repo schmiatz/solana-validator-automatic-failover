@@ -259,6 +259,12 @@ The default payload is Slack-compatible:
 {"text": "Validator failover success: vote latency exceeded threshold (50 slots)\nNew identity: DvAmv1VbS..."}
 ```
 
+**Telegram** (requires custom body with chat_id):
+```bash
+--webhook-url "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage" \
+--webhook-body '{"chat_id": "YOUR_CHAT_ID", "text": "Validator failover {status}: {reason}\nNew identity: {identity}"}'
+```
+
 **Custom Webhook Body** (optional, with placeholders):
 ```bash
 --webhook-url https://api.example.com/alert \

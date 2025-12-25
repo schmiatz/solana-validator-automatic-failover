@@ -164,8 +164,7 @@ func main() {
 	log.Printf("Identity keypair pubkey: %s", keypairPubkey)
 
 	if keypairPubkey == localResult.Identity {
-		log.Fatal("Error: The provided identity keypair is already active on this node. " +
-			"This node appears to be the primary validator, not a hot spare. Exiting.")
+		log.Fatal("Error: The provided identity keypair is already active on this node.")
 	}
 	log.Printf("Identity check passed: keypair is not active (node is in standby mode)")
 

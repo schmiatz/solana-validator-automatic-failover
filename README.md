@@ -31,6 +31,9 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
 | `--max-vote-latency` | No | delinquency (~150) | Trigger failover when this many slots behind (default: only on delinquency) |
 | `--retry-count` | No | `3` | Number of retries before triggering failover |
+| `--pagerduty-key` | No | - | PagerDuty routing key for alerts on failover |
+| `--webhook-url` | No | - | Generic webhook URL to POST on failover |
+| `--webhook-body` | No | - | Custom webhook body (supports `{reason}`, `{identity}` placeholders) |
 | `--log` | No | - | Path to log file (logs to stdout and file if set) |
 
 ### Example
@@ -233,6 +236,28 @@ After executing the set-identity command, the tool verifies the identity switch 
 2. Compares the returned identity with the pubkey from `--identity-keypair`
 3. If they match → logs success and exits
 4. If they don't match → logs error and exits with code 1
+
+### Alerts
+
+After successful verification, the tool can send alerts via:
+
+**PagerDuty** (simple — just provide routing key):
+```bash
+--pagerduty-key YOUR_PAGERDUTY_ROUTING_KEY
+```
+
+**Generic Webhook** (flexible — works with Slack, Discord, etc.):
+```bash
+--webhook-url https://hooks.slack.com/services/...
+```
+
+**Custom Webhook Body** (with placeholders):
+```bash
+--webhook-url https://api.example.com/alert \
+--webhook-body '{"text": "Failover: {reason}, new identity: {identity}"}'
+```
+
+Supported placeholders: `{reason}`, `{identity}`
 
 ---
 

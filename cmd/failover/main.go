@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +32,9 @@ type Config struct {
 	ConfigPath       string // For Frankendancer
 	LedgerPath       string // For Agave
 	ClientType       string // Detected client type (Agave/Frankendancer)
+	PagerDutyKey     string // PagerDuty routing key for alerts
+	WebhookURL       string // Generic webhook URL
+	WebhookBody      string // Custom webhook body template
 }
 
 func main() {
@@ -41,6 +47,9 @@ func main() {
 	identityKeypair := flag.String("identity-keypair", "", "Path to identity keypair JSON file (required)")
 	configPath := flag.String("config", "", "Path to config.toml (required for Frankendancer)")
 	ledgerPath := flag.String("ledger", "", "Path to validator ledger directory (required for Agave)")
+	pagerdutyKey := flag.String("pagerduty-key", "", "PagerDuty routing key for alerts on failover")
+	webhookURL := flag.String("webhook-url", "", "Generic webhook URL to POST on failover")
+	webhookBody := flag.String("webhook-body", "", "Custom webhook body (supports {reason}, {identity} placeholders)")
 	flag.Parse()
 
 	// Validate required parameters
@@ -60,6 +69,9 @@ func main() {
 		IdentityKeypair:  *identityKeypair,
 		ConfigPath:       *configPath,
 		LedgerPath:       *ledgerPath,
+		PagerDutyKey:     *pagerdutyKey,
+		WebhookURL:       *webhookURL,
+		WebhookBody:      *webhookBody,
 	}
 
 	// Set up logging
@@ -367,11 +379,11 @@ func triggerFailover(reason string, config *Config) {
 	log.Println("Failover command executed successfully")
 
 	// Verify identity switch via RPC
-	verifyIdentitySwitch(config)
+	verifyIdentitySwitch(config, reason)
 }
 
 // verifyIdentitySwitch confirms the identity was switched by querying the RPC
-func verifyIdentitySwitch(config *Config) {
+func verifyIdentitySwitch(config *Config, reason string) {
 	log.Println("Verifying identity switch via RPC...")
 
 	// Get expected pubkey from keypair file
@@ -396,6 +408,9 @@ func verifyIdentitySwitch(config *Config) {
 		log.Println("The set-identity command may not have taken effect")
 		os.Exit(1)
 	}
+
+	// Send alerts after successful verification
+	sendAlerts(config, reason, expectedPubkey)
 }
 
 // getRequiredCommand returns the required CLI command based on client type
@@ -436,4 +451,100 @@ func getPubkeyFromKeypair(path string) (string, error) {
 	// Public key is the last 32 bytes
 	pubkey := keypair[32:64]
 	return base58.Encode(pubkey), nil
+}
+
+// sendAlerts sends notifications via configured alert channels
+func sendAlerts(config *Config, reason string, identity string) {
+	if config.PagerDutyKey != "" {
+		sendPagerDutyAlert(config.PagerDutyKey, reason, identity)
+	}
+
+	if config.WebhookURL != "" {
+		sendWebhookAlert(config.WebhookURL, config.WebhookBody, reason, identity)
+	}
+}
+
+// sendPagerDutyAlert sends an alert to PagerDuty
+func sendPagerDutyAlert(routingKey string, reason string, identity string) {
+	log.Println("Sending PagerDuty alert...")
+
+	payload := map[string]interface{}{
+		"routing_key":  routingKey,
+		"event_action": "trigger",
+		"payload": map[string]interface{}{
+			"summary":  fmt.Sprintf("Validator failover triggered: %s", reason),
+			"severity": "critical",
+			"source":   fmt.Sprintf("validator-%s", identity[:8]),
+			"custom_details": map[string]string{
+				"reason":       reason,
+				"new_identity": identity,
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Warning: Failed to marshal PagerDuty payload: %v", err)
+		return
+	}
+
+	resp, err := http.Post(
+		"https://events.pagerduty.com/v2/enqueue",
+		"application/json",
+		bytes.NewBuffer(jsonData),
+	)
+	if err != nil {
+		log.Printf("Warning: Failed to send PagerDuty alert: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Println("PagerDuty alert sent successfully")
+	} else {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Warning: PagerDuty returned status %d: %s", resp.StatusCode, string(body))
+	}
+}
+
+// sendWebhookAlert sends an alert to a generic webhook URL
+func sendWebhookAlert(webhookURL string, customBody string, reason string, identity string) {
+	log.Printf("Sending webhook alert to %s...", webhookURL)
+
+	var jsonData []byte
+	var err error
+
+	if customBody != "" {
+		// Replace placeholders in custom body
+		body := strings.ReplaceAll(customBody, "{reason}", reason)
+		body = strings.ReplaceAll(body, "{identity}", identity)
+		jsonData = []byte(body)
+	} else {
+		// Default payload
+		payload := map[string]interface{}{
+			"event":    "failover_triggered",
+			"reason":   reason,
+			"identity": identity,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		}
+		jsonData, err = json.Marshal(payload)
+		if err != nil {
+			log.Printf("Warning: Failed to marshal webhook payload: %v", err)
+			return
+		}
+	}
+
+	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("Warning: Failed to send webhook alert: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Println("Webhook alert sent successfully")
+	} else {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Warning: Webhook returned status %d: %s", resp.StatusCode, string(body))
+	}
 }

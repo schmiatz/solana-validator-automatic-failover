@@ -262,6 +262,15 @@ Alerts are sent on **both success and failure** of the failover process. You'll 
 
 Supported placeholders: `{reason}`, `{identity}`, `{status}`, `{error}`
 
+**Example alert messages:**
+```
+✅ Validator failover SUCCESS: vote latency exceeded threshold (50 slots) (now active: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA)
+
+❌ Validator failover FAILED: vote account is delinquent - set-identity command failed
+
+❌ Validator failover FAILED: vote latency exceeded threshold (50 slots) - identity mismatch: expected ABC..., got XYZ...
+```
+
 ---
 
 ## Requirements

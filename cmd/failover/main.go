@@ -166,7 +166,7 @@ func main() {
 	if keypairPubkey == localResult.Identity {
 		log.Fatal("Error: The provided identity keypair is already active on this node.")
 	}
-	log.Printf("Identity check passed: keypair is not active (node is in standby mode)")
+	log.Printf("Identity check passed: provided keypair is not active")
 
 	// Step 4: Check if vote account is delinquent at startup
 	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)

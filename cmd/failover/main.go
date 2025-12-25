@@ -177,9 +177,7 @@ func main() {
 		return
 	}
 
-	log.Println("Vote account is not delinquent, starting continuous monitoring...")
-
-	// Step 3: Continuous monitoring
+	// Step 5: Continuous monitoring
 	monitorVoteAccount(ctx, checker, &config)
 }
 

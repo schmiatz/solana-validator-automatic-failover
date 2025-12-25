@@ -70,9 +70,12 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 ### Overview
 
 1. **Startup**: Check if local node (hot spare) is healthy
-2. **Initial delinquency check**: Check if monitored vote account is already delinquent
+2. **Identity check**: Verify the provided `--identity-keypair` is NOT currently active on this node
+   - If keypair matches node's identity → exit (this is the primary, not a spare)
+   - If keypair doesn't match → continue (node is in standby mode)
+3. **Initial delinquency check**: Check if monitored vote account is already delinquent
    - If delinquent → retry 2x (1s apart) → trigger failover
-3. **Continuous monitoring**: Check vote account status every second
+4. **Continuous monitoring**: Check vote account status every second
    - Always monitors for delinquency
    - If `--max-vote-latency` is set, also triggers failover when latency exceeds threshold
    - Any issue detected → retry 2x (1s apart) → trigger failover

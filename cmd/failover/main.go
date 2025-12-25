@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mr-tron/base58"
 	"github.com/schmiatz/solana-validator-automatic-failover/internal/health"
 	"github.com/schmiatz/solana-validator-automatic-failover/internal/rpc"
 )
@@ -153,7 +156,20 @@ func main() {
 		}
 	}
 
-	// Step 3: Check if vote account is delinquent at startup
+	// Step 3: Check if provided identity keypair matches current node identity
+	keypairPubkey, err := getPubkeyFromKeypair(config.IdentityKeypair)
+	if err != nil {
+		log.Fatalf("Error reading identity keypair: %v", err)
+	}
+	log.Printf("Identity keypair pubkey: %s", keypairPubkey)
+
+	if keypairPubkey == localResult.Identity {
+		log.Fatal("Error: The provided identity keypair is already active on this node. " +
+			"This node appears to be the primary validator, not a hot spare. Exiting.")
+	}
+	log.Printf("Identity check passed: keypair is not active (node is in standby mode)")
+
+	// Step 4: Check if vote account is delinquent at startup
 	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)
 
 	if checkDelinquencyWithRetries(checker, config.VotePubkey) {
@@ -369,4 +385,26 @@ func getRequiredCommand(clientType string) string {
 func isCommandAvailable(cmd string) bool {
 	_, err := exec.LookPath(cmd)
 	return err == nil
+}
+
+// getPubkeyFromKeypair reads a Solana keypair JSON file and returns the public key as base58
+// Solana keypair format: JSON array of 64 bytes (first 32 = secret key, last 32 = public key)
+func getPubkeyFromKeypair(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read keypair file: %w", err)
+	}
+
+	var keypair []byte
+	if err := json.Unmarshal(data, &keypair); err != nil {
+		return "", fmt.Errorf("failed to parse keypair JSON: %w", err)
+	}
+
+	if len(keypair) != 64 {
+		return "", fmt.Errorf("invalid keypair length: expected 64 bytes, got %d", len(keypair))
+	}
+
+	// Public key is the last 32 bytes
+	pubkey := keypair[32:64]
+	return base58.Encode(pubkey), nil
 }

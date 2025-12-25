@@ -332,7 +332,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 
 				// Verify with retries before triggering failover
 				if checkLatencyWithRetries(checker, config.VotePubkey, config.MaxVoteLatency, config.RetryCount) {
-					triggerFailover("vote latency exceeded threshold", config)
+					triggerFailover(fmt.Sprintf("vote latency exceeded threshold (%d slots)", config.MaxVoteLatency), config)
 					return
 				}
 				log.Println("Latency recovered, continuing monitoring...")
@@ -474,7 +474,7 @@ func sendPagerDutyAlert(routingKey string, reason string, identity string, succe
 	var summary string
 	var severity string
 	if success {
-		summary = fmt.Sprintf("Validator failover SUCCESS: %s", reason)
+		summary = fmt.Sprintf("Validator failover SUCCESS: %s (now active: %s)", reason, identity)
 		severity = "warning"
 	} else {
 		summary = fmt.Sprintf("Validator failover FAILED: %s - %s", reason, errorMsg)

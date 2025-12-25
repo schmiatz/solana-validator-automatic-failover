@@ -365,6 +365,37 @@ func triggerFailover(reason string, config *Config) {
 		log.Printf("Command output: %s", string(output))
 	}
 	log.Println("Failover command executed successfully")
+
+	// Verify identity switch via RPC
+	verifyIdentitySwitch(config)
+}
+
+// verifyIdentitySwitch confirms the identity was switched by querying the RPC
+func verifyIdentitySwitch(config *Config) {
+	log.Println("Verifying identity switch via RPC...")
+
+	// Get expected pubkey from keypair file
+	expectedPubkey, err := getPubkeyFromKeypair(config.IdentityKeypair)
+	if err != nil {
+		log.Printf("Warning: Could not read keypair for verification: %v", err)
+		return
+	}
+
+	// Query current identity from RPC
+	client := rpc.NewClient(config.LocalRPCEndpoint)
+	currentIdentity, err := client.GetIdentity()
+	if err != nil {
+		log.Printf("Warning: Could not query identity for verification: %v", err)
+		return
+	}
+
+	if currentIdentity == expectedPubkey {
+		log.Printf("Identity switch VERIFIED: node is now running as %s", currentIdentity)
+	} else {
+		log.Printf("WARNING: Identity mismatch! Expected %s but got %s", expectedPubkey, currentIdentity)
+		log.Println("The set-identity command may not have taken effect")
+		os.Exit(1)
+	}
 }
 
 // getRequiredCommand returns the required CLI command based on client type

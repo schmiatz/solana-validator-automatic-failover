@@ -173,7 +173,7 @@ The tool performs the following checks on the **local node** to verify it's read
 
 ```
 2025/12/24 12:52:50.981144 Starting automatic failover manager...
-2025/12/24 12:52:50.981717 Local RPC: https://api.testnet.solana.com
+2025/12/24 12:52:50.981717 Local RPC: http://localhost:8899
 2025/12/24 12:52:50.981885 Checking local node health...
 2025/12/24 12:52:52.202651 Local node is healthy
 2025/12/24 12:52:52.227780 Client: Agave

@@ -249,15 +249,20 @@ Alerts are sent on **both success and failure** of the failover process. You'll 
 --pagerduty-key YOUR_PAGERDUTY_ROUTING_KEY
 ```
 
-**Generic Webhook** (flexible — works with Slack, Discord, etc.):
+**Generic Webhook** (works with Slack, Discord, etc.):
 ```bash
 --webhook-url https://hooks.slack.com/services/...
 ```
 
-**Custom Webhook Body** (with placeholders):
+The default payload is Slack-compatible:
+```json
+{"text": "Validator failover success: vote latency exceeded threshold (50 slots)\nNew identity: DvAmv1VbS..."}
+```
+
+**Custom Webhook Body** (optional, with placeholders):
 ```bash
 --webhook-url https://api.example.com/alert \
---webhook-body '{"text": "Failover {status}: {reason}", "error": "{error}"}'
+--webhook-body '{"message": "Failover {status}: {reason}", "node": "{identity}"}'
 ```
 
 Supported placeholders: `{reason}`, `{identity}`, `{status}`, `{error}`

@@ -547,14 +547,15 @@ func sendWebhookAlert(webhookURL string, customBody string, reason string, ident
 		body = strings.ReplaceAll(body, "{error}", errorMsg)
 		jsonData = []byte(body)
 	} else {
-		// Default payload
-		payload := map[string]interface{}{
-			"event":     "failover_triggered",
-			"reason":    reason,
-			"identity":  identity,
-			"status":    status,
-			"error":     errorMsg,
-			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		// Default payload (Slack-compatible)
+		var text string
+		if success {
+			text = fmt.Sprintf("Validator failover %s: %s\nNew identity: %s", status, reason, identity)
+		} else {
+			text = fmt.Sprintf("Validator failover %s: %s\nError: %s", status, reason, errorMsg)
+		}
+		payload := map[string]string{
+			"text": text,
 		}
 		jsonData, err = json.Marshal(payload)
 		if err != nil {

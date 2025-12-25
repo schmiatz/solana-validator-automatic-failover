@@ -24,6 +24,7 @@ type Config struct {
 	LogFile          string
 	VotePubkey       string
 	MaxVoteLatency   int64
+	RetryCount       int
 	IdentityKeypair  string
 	ConfigPath       string // For Frankendancer
 	LedgerPath       string // For Agave
@@ -36,6 +37,7 @@ func main() {
 	logFile := flag.String("log", "", "Path to log file (logs to stdout and file if set)")
 	votePubkey := flag.String("votepubkey", "", "Vote account public key to monitor (required)")
 	maxVoteLatency := flag.Int64("max-vote-latency", 0, "Max slots behind before triggering failover (0 = disabled)")
+	retryCount := flag.Int("retry-count", 3, "Number of retries before triggering failover")
 	identityKeypair := flag.String("identity-keypair", "", "Path to identity keypair JSON file (required)")
 	configPath := flag.String("config", "", "Path to config.toml (required for Frankendancer)")
 	ledgerPath := flag.String("ledger", "", "Path to validator ledger directory (required for Agave)")
@@ -54,6 +56,7 @@ func main() {
 		LogFile:          *logFile,
 		VotePubkey:       *votePubkey,
 		MaxVoteLatency:   *maxVoteLatency,
+		RetryCount:       *retryCount,
 		IdentityKeypair:  *identityKeypair,
 		ConfigPath:       *configPath,
 		LedgerPath:       *ledgerPath,
@@ -171,7 +174,7 @@ func main() {
 	// Step 4: Check if vote account is delinquent at startup
 	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)
 
-	if checkDelinquencyWithRetries(checker, config.VotePubkey) {
+	if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
 		// Delinquent after retries, trigger failover
 		triggerFailover("vote account is delinquent", &config)
 		return
@@ -181,10 +184,9 @@ func main() {
 	monitorVoteAccount(ctx, checker, &config)
 }
 
-// checkDelinquencyWithRetries checks if vote account is delinquent with 2 retries (1 second apart)
+// checkDelinquencyWithRetries checks if vote account is delinquent with retries (1 second apart)
 // Returns true if confirmed delinquent after all retries, false if recovered or on errors
-func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) bool {
-	const maxAttempts = 3
+func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string, maxAttempts int) bool {
 	const retryInterval = 1 * time.Second
 
 	delinquentCount := 0
@@ -226,10 +228,9 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string) boo
 	return delinquentCount > 0
 }
 
-// checkLatencyWithRetries checks if vote latency exceeds threshold with 2 retries (1 second apart)
+// checkLatencyWithRetries checks if vote latency exceeds threshold with retries (1 second apart)
 // Returns true if confirmed exceeded after all retries, false if recovered or on errors
-func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLatency int64) bool {
-	const maxAttempts = 3
+func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLatency int64, maxAttempts int) bool {
 	const retryInterval = 1 * time.Second
 
 	exceededCount := 0
@@ -305,7 +306,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				log.Printf("WARNING: Vote account is DELINQUENT!")
 
 				// Verify with retries before triggering failover
-				if checkDelinquencyWithRetries(checker, config.VotePubkey) {
+				if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
 					triggerFailover("vote account is delinquent", config)
 					return
 				}
@@ -318,7 +319,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
 
 				// Verify with retries before triggering failover
-				if checkLatencyWithRetries(checker, config.VotePubkey, config.MaxVoteLatency) {
+				if checkLatencyWithRetries(checker, config.VotePubkey, config.MaxVoteLatency, config.RetryCount) {
 					triggerFailover("vote latency exceeded threshold", config)
 					return
 				}

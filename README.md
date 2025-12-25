@@ -30,6 +30,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 | `--ledger` | **Agave only** | - | Path to validator ledger directory (required for Agave nodes) |
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
 | `--max-vote-latency` | No | delinquency (~150) | Trigger failover when this many slots behind (default: only on delinquency) |
+| `--retry-count` | No | `3` | Number of retries before triggering failover |
 | `--log` | No | - | Path to log file (logs to stdout and file if set) |
 
 ### Example

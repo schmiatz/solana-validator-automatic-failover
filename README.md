@@ -225,6 +225,15 @@ fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json>
 agave-validator --ledger <path/to/validator-ledger> set-identity <path/to/keypair.json>
 ```
 
+### Verification
+
+After executing the set-identity command, the tool verifies the identity switch was successful:
+
+1. Queries `getIdentity` from the local RPC
+2. Compares the returned identity with the pubkey from `--identity-keypair`
+3. If they match → logs success and exits
+4. If they don't match → logs error and exits with code 1
+
 ---
 
 ## Requirements

@@ -239,7 +239,10 @@ After executing the set-identity command, the tool verifies the identity switch 
 
 ### Alerts
 
-After successful verification, the tool can send alerts via:
+Alerts are sent on **both success and failure** of the failover process. You'll be notified if:
+- ✅ Failover succeeded and identity switch was verified
+- ❌ The set-identity command failed
+- ❌ Identity verification failed (mismatch)
 
 **PagerDuty** (simple — just provide routing key):
 ```bash
@@ -254,10 +257,10 @@ After successful verification, the tool can send alerts via:
 **Custom Webhook Body** (with placeholders):
 ```bash
 --webhook-url https://api.example.com/alert \
---webhook-body '{"text": "Failover: {reason}, new identity: {identity}"}'
+--webhook-body '{"text": "Failover {status}: {reason}", "error": "{error}"}'
 ```
 
-Supported placeholders: `{reason}`, `{identity}`
+Supported placeholders: `{reason}`, `{identity}`, `{status}`, `{error}`
 
 ---
 

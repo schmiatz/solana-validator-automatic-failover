@@ -364,12 +364,16 @@ func triggerFailover(reason string, config *Config) {
 
 	log.Printf("Executing: %s", cmdStr)
 
+	// Get identity pubkey for alerts
+	identityPubkey, _ := getPubkeyFromKeypair(config.IdentityKeypair)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("Error executing failover command: %v", err)
 		if len(output) > 0 {
 			log.Printf("Command output: %s", string(output))
 		}
+		sendAlerts(config, reason, identityPubkey, false, "set-identity command failed")
 		os.Exit(1)
 	}
 
@@ -403,14 +407,13 @@ func verifyIdentitySwitch(config *Config, reason string) {
 
 	if currentIdentity == expectedPubkey {
 		log.Printf("Identity switch VERIFIED: node is now running as %s", currentIdentity)
+		sendAlerts(config, reason, expectedPubkey, true, "")
 	} else {
 		log.Printf("WARNING: Identity mismatch! Expected %s but got %s", expectedPubkey, currentIdentity)
 		log.Println("The set-identity command may not have taken effect")
+		sendAlerts(config, reason, expectedPubkey, false, fmt.Sprintf("identity mismatch: expected %s, got %s", expectedPubkey, currentIdentity))
 		os.Exit(1)
 	}
-
-	// Send alerts after successful verification
-	sendAlerts(config, reason, expectedPubkey)
 }
 
 // getRequiredCommand returns the required CLI command based on client type
@@ -454,30 +457,47 @@ func getPubkeyFromKeypair(path string) (string, error) {
 }
 
 // sendAlerts sends notifications via configured alert channels
-func sendAlerts(config *Config, reason string, identity string) {
+func sendAlerts(config *Config, reason string, identity string, success bool, errorMsg string) {
 	if config.PagerDutyKey != "" {
-		sendPagerDutyAlert(config.PagerDutyKey, reason, identity)
+		sendPagerDutyAlert(config.PagerDutyKey, reason, identity, success, errorMsg)
 	}
 
 	if config.WebhookURL != "" {
-		sendWebhookAlert(config.WebhookURL, config.WebhookBody, reason, identity)
+		sendWebhookAlert(config.WebhookURL, config.WebhookBody, reason, identity, success, errorMsg)
 	}
 }
 
 // sendPagerDutyAlert sends an alert to PagerDuty
-func sendPagerDutyAlert(routingKey string, reason string, identity string) {
+func sendPagerDutyAlert(routingKey string, reason string, identity string, success bool, errorMsg string) {
 	log.Println("Sending PagerDuty alert...")
+
+	var summary string
+	var severity string
+	if success {
+		summary = fmt.Sprintf("Validator failover SUCCESS: %s", reason)
+		severity = "warning"
+	} else {
+		summary = fmt.Sprintf("Validator failover FAILED: %s - %s", reason, errorMsg)
+		severity = "critical"
+	}
+
+	status := "success"
+	if !success {
+		status = "failed"
+	}
 
 	payload := map[string]interface{}{
 		"routing_key":  routingKey,
 		"event_action": "trigger",
 		"payload": map[string]interface{}{
-			"summary":  fmt.Sprintf("Validator failover triggered: %s", reason),
-			"severity": "critical",
+			"summary":  summary,
+			"severity": severity,
 			"source":   fmt.Sprintf("validator-%s", identity[:8]),
 			"custom_details": map[string]string{
 				"reason":       reason,
 				"new_identity": identity,
+				"status":       status,
+				"error":        errorMsg,
 			},
 		},
 	}
@@ -508,23 +528,32 @@ func sendPagerDutyAlert(routingKey string, reason string, identity string) {
 }
 
 // sendWebhookAlert sends an alert to a generic webhook URL
-func sendWebhookAlert(webhookURL string, customBody string, reason string, identity string) {
+func sendWebhookAlert(webhookURL string, customBody string, reason string, identity string, success bool, errorMsg string) {
 	log.Printf("Sending webhook alert to %s...", webhookURL)
 
 	var jsonData []byte
 	var err error
 
+	status := "success"
+	if !success {
+		status = "failed"
+	}
+
 	if customBody != "" {
 		// Replace placeholders in custom body
 		body := strings.ReplaceAll(customBody, "{reason}", reason)
 		body = strings.ReplaceAll(body, "{identity}", identity)
+		body = strings.ReplaceAll(body, "{status}", status)
+		body = strings.ReplaceAll(body, "{error}", errorMsg)
 		jsonData = []byte(body)
 	} else {
 		// Default payload
 		payload := map[string]interface{}{
-			"event":    "failover_triggered",
-			"reason":   reason,
-			"identity": identity,
+			"event":     "failover_triggered",
+			"reason":    reason,
+			"identity":  identity,
+			"status":    status,
+			"error":     errorMsg,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 		jsonData, err = json.Marshal(payload)

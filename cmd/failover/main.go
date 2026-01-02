@@ -153,36 +153,39 @@ func main() {
 
 	// CLI check
 	requiredCmd := getRequiredCommand(localResult.ClientType)
-	cliPassed := requiredCmd == "" || isCommandAvailable(requiredCmd)
-	cliCheck := checkResult{name: "CLI", passed: cliPassed}
-	if !cliPassed {
-		cliCheck.errMsg = fmt.Sprintf("Required command '%s' not found in PATH", requiredCmd)
+	pathPassed := requiredCmd == "" || isCommandAvailable(requiredCmd)
+	pathCheck := checkResult{name: "Path", passed: pathPassed}
+	if !pathPassed {
+		pathCheck.errMsg = fmt.Sprintf("Required command '%s' not found in PATH", requiredCmd)
 		if failedCheck == nil {
-			failedCheck = &cliCheck
+			failedCheck = &pathCheck
 		}
 	}
-	checks = append(checks, cliCheck)
+	checks = append(checks, pathCheck)
 
-	// Config check (client-specific parameters)
-	configPassed := true
-	configErrMsg := ""
+	// Client-specific parameter check (Config for Frankendancer, Ledger for Agave)
+	paramPassed := true
+	paramErrMsg := ""
+	paramName := "Config" // Default
 	switch config.ClientType {
 	case "Frankendancer":
+		paramName = "Config"
 		if config.ConfigPath == "" {
-			configPassed = false
-			configErrMsg = "--config is required for Frankendancer nodes"
+			paramPassed = false
+			paramErrMsg = "--config is required for Frankendancer nodes"
 		}
 	case "Agave":
+		paramName = "Ledger"
 		if config.LedgerPath == "" {
-			configPassed = false
-			configErrMsg = "--ledger is required for Agave nodes"
+			paramPassed = false
+			paramErrMsg = "--ledger is required for Agave nodes"
 		}
 	}
-	configCheck := checkResult{name: "Config", passed: configPassed, errMsg: configErrMsg}
-	if !configPassed && failedCheck == nil {
-		failedCheck = &configCheck
+	paramCheck := checkResult{name: paramName, passed: paramPassed, errMsg: paramErrMsg}
+	if !paramPassed && failedCheck == nil {
+		failedCheck = &paramCheck
 	}
-	checks = append(checks, configCheck)
+	checks = append(checks, paramCheck)
 
 	// Keypair check - read and validate
 	keypairPubkey, err := getPubkeyFromKeypair(config.IdentityKeypair)
@@ -207,10 +210,10 @@ func main() {
 	}
 	checks = append(checks, identityCheck)
 
-	// Vote account check - determine ACTIVE/STANDBY mode
+	// Voting check - determine ACTIVE/STANDBY mode
 	voteAccountResult, voteErr := checker.Check(config.VotePubkey)
 	votePassed := voteErr == nil
-	voteCheck := checkResult{name: "Vote", passed: votePassed}
+	voteCheck := checkResult{name: "Voting", passed: votePassed}
 	if voteErr != nil {
 		voteCheck.errMsg = fmt.Sprintf("Cannot check vote account: %v", voteErr)
 		if failedCheck == nil {

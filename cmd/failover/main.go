@@ -247,20 +247,26 @@ func main() {
 	checks = append(checks, modeCheck)
 
 	// === Print the table ===
+	// Helper to format a table row with proper 78-char inner width
+	tableRow := func(label, value string) string {
+		content := fmt.Sprintf("  %-16s  %s", label, value)
+		return fmt.Sprintf("║%-78s║", content)
+	}
+
 	log.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
 	log.Println("║                        Automatic Failover Manager                            ║")
 	log.Println("╠══════════════════════════════════════════════════════════════════════════════╣")
-	log.Printf("║  Vote Account     %-58s║", config.VotePubkey)
-	log.Printf("║  Status           %-58s║", config.NodeMode)
+	log.Println(tableRow("Vote Account", config.VotePubkey))
+	log.Println(tableRow("Status", config.NodeMode))
 	if config.MaxVoteLatency > 0 {
-		log.Printf("║  Latency Limit    %-58s║", fmt.Sprintf("%d slots", config.MaxVoteLatency))
+		log.Println(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
 	} else {
-		log.Printf("║  Latency Limit    %-58s║", "delinquency only (~150 slots)")
+		log.Println(tableRow("Latency Limit", "delinquency only (~150 slots)"))
 	}
 	clientVersion := fmt.Sprintf("%s %s", localResult.ClientType, localResult.Version)
-	log.Printf("║  Client           %-58s║", clientVersion)
-	log.Printf("║  Active Identity  %-58s║", localResult.Identity)
-	log.Printf("║  Failover Key     %-58s║", keypairPubkey)
+	log.Println(tableRow("Client", clientVersion))
+	log.Println(tableRow("Active Identity", localResult.Identity))
+	log.Println(tableRow("Failover Key", keypairPubkey))
 
 	// Build checks line - split into two rows if needed
 	checksLine1 := ""
@@ -277,9 +283,9 @@ func main() {
 			checksLine2 += checkStr
 		}
 	}
-	log.Printf("║  Checks           %-58s║", strings.TrimSpace(checksLine1))
+	log.Println(tableRow("Checks", strings.TrimSpace(checksLine1)))
 	if checksLine2 != "" {
-		log.Printf("║                   %-58s║", strings.TrimSpace(checksLine2))
+		log.Printf("║%-78s║", "                    "+strings.TrimSpace(checksLine2))
 	}
 	log.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 

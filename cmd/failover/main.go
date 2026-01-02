@@ -253,29 +253,36 @@ func main() {
 		return fmt.Sprintf("║%-78s║", content)
 	}
 
-	// Helper to log a line to both stdout and log file
-	logLine := func(line string) {
-		log.Println(line)
+	// Helper to print a line to both stdout and log file (no timestamp on stdout, timestamp on file)
+	printLine := func(line string) {
+		fmt.Println(line)
 		if config.LogFileHandle != nil {
-			timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
-			fmt.Fprintf(config.LogFileHandle, "%s %s\n", timestamp, line)
+			fmt.Fprintf(config.LogFileHandle, "%s\n", line)
 		}
 	}
 
-	logLine("╔══════════════════════════════════════════════════════════════════════════════╗")
-	logLine("║                        Automatic Failover Manager                            ║")
-	logLine("╠══════════════════════════════════════════════════════════════════════════════╣")
-	logLine(tableRow("Vote Account", config.VotePubkey))
-	logLine(tableRow("Status", config.NodeMode))
+	// Print header with timestamp
+	log.Println("Starting Automatic Failover Manager:")
+	if config.LogFileHandle != nil {
+		timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
+		fmt.Fprintf(config.LogFileHandle, "%s Starting Automatic Failover Manager:\n", timestamp)
+	}
+
+	// Print the box without timestamps
+	printLine("╔══════════════════════════════════════════════════════════════════════════════╗")
+	printLine("║                        Automatic Failover Manager                            ║")
+	printLine("╠══════════════════════════════════════════════════════════════════════════════╣")
+	printLine(tableRow("Vote Account", config.VotePubkey))
+	printLine(tableRow("Status", config.NodeMode))
 	if config.MaxVoteLatency > 0 {
-		logLine(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
+		printLine(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
 	} else {
-		logLine(tableRow("Latency Limit", "delinquency only (~150 slots)"))
+		printLine(tableRow("Latency Limit", "delinquency only (~150 slots)"))
 	}
 	clientVersion := fmt.Sprintf("%s %s", localResult.ClientType, localResult.Version)
-	logLine(tableRow("Client", clientVersion))
-	logLine(tableRow("Active Identity", localResult.Identity))
-	logLine(tableRow("Failover Key", keypairPubkey))
+	printLine(tableRow("Client", clientVersion))
+	printLine(tableRow("Active Identity", localResult.Identity))
+	printLine(tableRow("Failover Key", keypairPubkey))
 
 	// Build checks line - split into two rows if needed
 	checksLine1 := ""
@@ -292,12 +299,12 @@ func main() {
 			checksLine2 += checkStr
 		}
 	}
-	logLine(tableRow("Checks", strings.TrimSpace(checksLine1)))
+	printLine(tableRow("Checks", strings.TrimSpace(checksLine1)))
 	if checksLine2 != "" {
 		checksLine2Row := fmt.Sprintf("║%-78s║", "                    "+strings.TrimSpace(checksLine2))
-		logLine(checksLine2Row)
+		printLine(checksLine2Row)
 	}
-	logLine("╚══════════════════════════════════════════════════════════════════════════════╝")
+	printLine("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 	// If any check failed, print error and exit
 	if failedCheck != nil {
@@ -420,9 +427,6 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 	// Latency counters
 	var lowCount, mediumCount, highCount uint64
 
-	// Indentation to align with log timestamp (27 chars)
-	const indent = "                           "
-
 	// Helper to write to log file
 	logToFile := func(format string, args ...interface{}) {
 		if config.LogFileHandle != nil {
@@ -441,11 +445,11 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		return "High"
 	}
 
-	// Print initial box frame for inline update area (indented to align with startup table)
-	fmt.Println(indent + "╔══════════════════════════════════════════════════════════════════════════════╗")
-	fmt.Println(indent + "║                                                                              ║")
-	fmt.Println(indent + "║                                                                              ║")
-	fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
+	// Print initial box frame for inline update area (no indentation)
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                                                                              ║")
+	fmt.Println("║                                                                              ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 	for {
 		select {
@@ -478,8 +482,8 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				lowCount, mediumCount, highCount)
 			statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
 				result.CurrentSlot, result.LastVote, latency)
-			countsLine := indent + fmt.Sprintf("║%-78s║", countsContent)
-			statusLine := indent + fmt.Sprintf("║%-78s║", statusContent)
+			countsLine := fmt.Sprintf("║%-78s║", countsContent)
+			statusLine := fmt.Sprintf("║%-78s║", statusContent)
 
 			// Move up 3 lines (to the first content line inside the box) and update
 			fmt.Print("\033[3A")    // Move up 3 lines
@@ -488,7 +492,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			fmt.Print("\033[K")     // Clear line
 			fmt.Println(statusLine) // Print status
 			fmt.Print("\033[K")     // Clear line
-			fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
+			fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 			// Write detailed log to file with category
 			logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
@@ -508,10 +512,10 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				log.Println("Delinquency recovered, continuing monitoring...")
 				logToFile("Delinquency recovered, continuing monitoring...")
 				// Reprint box frame
-				fmt.Println(indent + "╔══════════════════════════════════════════════════════════════════════════════╗")
-				fmt.Println(indent + "║                                                                              ║")
-				fmt.Println(indent + "║                                                                              ║")
-				fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
+				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 				continue
 			}
 
@@ -529,10 +533,10 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				log.Println("Latency recovered, continuing monitoring...")
 				logToFile("Latency recovered, continuing monitoring...")
 				// Reprint box frame
-				fmt.Println(indent + "╔══════════════════════════════════════════════════════════════════════════════╗")
-				fmt.Println(indent + "║                                                                              ║")
-				fmt.Println(indent + "║                                                                              ║")
-				fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
+				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 			}
 		}
 	}

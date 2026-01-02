@@ -37,16 +37,16 @@ type GossipInfo struct {
 
 // WaitForHealthy blocks until the local node is healthy or context is cancelled
 func (c *Checker) WaitForHealthy(ctx context.Context) error {
-	log.Println("Checking local node health...")
-
 	ticker := time.NewTicker(defaultCheckInterval)
 	defer ticker.Stop()
 
 	// Check immediately first
 	if err := c.client.GetHealth(); err == nil {
-		log.Println("Local node is healthy")
 		return nil
 	}
+
+	// Only print waiting message if node is not immediately healthy
+	log.Println("Waiting for node to become healthy...")
 
 	for {
 		select {
@@ -57,7 +57,7 @@ func (c *Checker) WaitForHealthy(ctx context.Context) error {
 				log.Printf("Node not healthy yet: %v", err)
 				continue
 			}
-			log.Println("Local node is healthy")
+			log.Println("Node is now healthy")
 			return nil
 		}
 	}

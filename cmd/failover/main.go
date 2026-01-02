@@ -92,13 +92,6 @@ func main() {
 		log.SetOutput(multiWriter)
 	}
 
-	log.Println("Starting automatic failover manager...")
-	log.Printf("Local RPC: %s", config.LocalRPCEndpoint)
-	log.Printf("Monitoring vote account: %s", config.VotePubkey)
-	if config.MaxVoteLatency > 0 {
-		log.Printf("Max vote latency threshold: %d slots", config.MaxVoteLatency)
-	}
-
 	// Create context that listens for shutdown signals
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -118,107 +111,183 @@ func main() {
 	// Create health checker
 	checker := health.NewChecker(localClient)
 
-	// Step 1: Wait for local node to be healthy before proceeding
+	// === Collect all check results ===
+	type checkResult struct {
+		name    string
+		passed  bool
+		errMsg  string
+	}
+	var checks []checkResult
+	var failedCheck *checkResult
+
+	// Check 1: Wait for local node to be healthy
 	if err := checker.WaitForHealthy(ctx); err != nil {
 		log.Fatalf("Failed waiting for node health: %v", err)
 	}
 
-	// Perform detailed health check of local node (batched: identity, version, cluster nodes)
+	// Get detailed health info
 	localResult, err := checker.CheckLocal()
 	if err != nil {
 		log.Fatalf("Health check failed: %v", err)
 	}
-
-	// Store client type in config
 	config.ClientType = localResult.ClientType
 
-	// Display node info
-	if localResult.ClientType != "" {
-		log.Printf("Client: %s", localResult.ClientType)
-		log.Printf("Version: %s", localResult.Version)
+	// Health check
+	healthCheck := checkResult{name: "Health", passed: localResult.Healthy}
+	if !localResult.Healthy {
+		healthCheck.errMsg = "Node is not healthy"
+		failedCheck = &healthCheck
 	}
+	checks = append(checks, healthCheck)
 
-	log.Printf("Local node health check result:")
-	log.Printf("  Identity: %s", localResult.Identity)
-	log.Printf("  Healthy: %v (from getHealth RPC)", localResult.Healthy)
-
-	// Display gossip info if available
-	if localResult.Gossip != nil {
-		log.Printf("  Gossip status:")
-		log.Printf("    In gossip: %v", localResult.Gossip.InGossip)
-		if localResult.Gossip.GossipAddress != "" {
-			log.Printf("    Gossip address: %s", localResult.Gossip.GossipAddress)
-			log.Printf("    TCP reachable: %v", localResult.Gossip.TCPReachable)
+	// Gossip check
+	gossipPassed := localResult.Gossip != nil && localResult.Gossip.InGossip && localResult.Gossip.TCPReachable
+	gossipCheck := checkResult{name: "Gossip", passed: gossipPassed}
+	if !gossipPassed {
+		gossipCheck.errMsg = "Node not visible in gossip or gossip port unreachable"
+		if failedCheck == nil {
+			failedCheck = &gossipCheck
 		}
 	}
+	checks = append(checks, gossipCheck)
 
-	// Step 2: Check if required CLI tool is available in PATH
+	// CLI check
 	requiredCmd := getRequiredCommand(localResult.ClientType)
-	if requiredCmd != "" {
-		if !isCommandAvailable(requiredCmd) {
-			log.Fatalf("Error: Required command '%s' not found in PATH", requiredCmd)
+	cliPassed := requiredCmd == "" || isCommandAvailable(requiredCmd)
+	cliCheck := checkResult{name: "CLI", passed: cliPassed}
+	if !cliPassed {
+		cliCheck.errMsg = fmt.Sprintf("Required command '%s' not found in PATH", requiredCmd)
+		if failedCheck == nil {
+			failedCheck = &cliCheck
 		}
-		log.Printf("Required command '%s' found in PATH", requiredCmd)
 	}
+	checks = append(checks, cliCheck)
 
-	// Validate client-specific parameters
+	// Config check (client-specific parameters)
+	configPassed := true
+	configErrMsg := ""
 	switch config.ClientType {
 	case "Frankendancer":
 		if config.ConfigPath == "" {
-			log.Fatal("Error: --config is required for Frankendancer nodes")
+			configPassed = false
+			configErrMsg = "--config is required for Frankendancer nodes"
 		}
 	case "Agave":
 		if config.LedgerPath == "" {
-			log.Fatal("Error: --ledger is required for Agave nodes")
+			configPassed = false
+			configErrMsg = "--ledger is required for Agave nodes"
 		}
 	}
+	configCheck := checkResult{name: "Config", passed: configPassed, errMsg: configErrMsg}
+	if !configPassed && failedCheck == nil {
+		failedCheck = &configCheck
+	}
+	checks = append(checks, configCheck)
 
-	// Step 3: Check if provided identity keypair matches current node identity
+	// Keypair check - read and validate
 	keypairPubkey, err := getPubkeyFromKeypair(config.IdentityKeypair)
-	if err != nil {
-		log.Fatalf("Error reading identity keypair: %v", err)
+	keypairReadable := err == nil
+	keypairCheck := checkResult{name: "Keypair", passed: keypairReadable}
+	if !keypairReadable {
+		keypairCheck.errMsg = fmt.Sprintf("Cannot read identity keypair: %v", err)
+		if failedCheck == nil {
+			failedCheck = &keypairCheck
+		}
 	}
-	log.Printf("Identity keypair pubkey: %s", keypairPubkey)
+	checks = append(checks, keypairCheck)
 
-	if keypairPubkey == localResult.Identity {
-		log.Fatal("Error: The provided identity keypair is already active on this node.")
+	// Identity check - keypair must not be currently active on this node
+	identityPassed := keypairReadable && keypairPubkey != localResult.Identity
+	identityCheck := checkResult{name: "Identity", passed: identityPassed}
+	if keypairReadable && keypairPubkey == localResult.Identity {
+		identityCheck.errMsg = "Provided keypair is already active on this node"
+		if failedCheck == nil {
+			failedCheck = &identityCheck
+		}
 	}
-	log.Printf("Identity check passed: provided keypair is not active")
+	checks = append(checks, identityCheck)
 
-	// Step 4: Check if this node is the active validator for the vote account
-	log.Printf("Checking if this node is the active validator for vote account %s...", config.VotePubkey)
-	voteAccountResult, err := checker.Check(config.VotePubkey)
-	if err != nil {
-		log.Fatalf("Error checking vote account: %v", err)
+	// Vote account check - determine ACTIVE/STANDBY mode
+	voteAccountResult, voteErr := checker.Check(config.VotePubkey)
+	votePassed := voteErr == nil
+	voteCheck := checkResult{name: "Vote", passed: votePassed}
+	if voteErr != nil {
+		voteCheck.errMsg = fmt.Sprintf("Cannot check vote account: %v", voteErr)
+		if failedCheck == nil {
+			failedCheck = &voteCheck
+		}
 	}
+	checks = append(checks, voteCheck)
 
-	if voteAccountResult.NodePubkey == localResult.Identity {
-		log.Printf("Node status: ACTIVE (this node is currently validating for vote account %s)", config.VotePubkey)
-		config.NodeMode = "ACTIVE"
+	// Determine node mode and set config
+	modePassed := true
+	modeErrMsg := ""
+	if votePassed {
+		if voteAccountResult.NodePubkey == localResult.Identity {
+			config.NodeMode = "ACTIVE"
+		} else {
+			config.NodeMode = "STANDBY"
+		}
 		config.PreviousIdentity = localResult.Identity
 
-		// Step 5 (active): Verify that --identity-keypair is DIFFERENT from vote account's validator
-		// This ensures failover will switch away from the voting identity
-		if keypairPubkey == voteAccountResult.NodePubkey {
-			log.Fatalf("Error: Identity keypair is the current voting identity. On an active node, --identity-keypair must be a different keypair.")
+		// Mode-specific keypair validation
+		if config.NodeMode == "ACTIVE" && keypairReadable && keypairPubkey == voteAccountResult.NodePubkey {
+			modePassed = false
+			modeErrMsg = "On ACTIVE node, --identity-keypair must be different from voting identity"
+		} else if config.NodeMode == "STANDBY" && keypairReadable && keypairPubkey != voteAccountResult.NodePubkey {
+			modePassed = false
+			modeErrMsg = fmt.Sprintf("On STANDBY node, --identity-keypair must match voting identity (%s)", voteAccountResult.NodePubkey)
 		}
-		log.Printf("Identity keypair verified: different from voting identity")
+	}
+	modeCheck := checkResult{name: "Mode", passed: modePassed, errMsg: modeErrMsg}
+	if !modePassed && failedCheck == nil {
+		failedCheck = &modeCheck
+	}
+	checks = append(checks, modeCheck)
+
+	// === Print the table ===
+	log.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	log.Println("║                        Automatic Failover Manager                            ║")
+	log.Println("╠══════════════════════════════════════════════════════════════════════════════╣")
+	log.Printf("║  Vote Account     %-58s║", config.VotePubkey)
+	log.Printf("║  Status           %-58s║", config.NodeMode)
+	if config.MaxVoteLatency > 0 {
+		log.Printf("║  Latency Limit    %-58s║", fmt.Sprintf("%d slots", config.MaxVoteLatency))
 	} else {
-		log.Printf("Node status: STANDBY (vote account is being validated by %s)", voteAccountResult.NodePubkey)
-		config.NodeMode = "STANDBY"
-		config.PreviousIdentity = localResult.Identity
+		log.Printf("║  Latency Limit    %-58s║", "delinquency only (~150 slots)")
+	}
+	clientVersion := fmt.Sprintf("%s %s", localResult.ClientType, localResult.Version)
+	log.Printf("║  Client           %-58s║", clientVersion)
+	log.Printf("║  Active Identity  %-58s║", localResult.Identity)
+	log.Printf("║  Failover Key     %-58s║", keypairPubkey)
 
-		// Step 5 (standby): Verify that --identity-keypair matches the vote account's current validator
-		// This ensures we're failing over to the correct identity
-		if keypairPubkey != voteAccountResult.NodePubkey {
-			log.Fatalf("Error: Identity keypair mismatch. The provided keypair (%s) does not match the vote account's validator (%s)",
-				keypairPubkey, voteAccountResult.NodePubkey)
+	// Build checks line - split into two rows if needed
+	checksLine1 := ""
+	checksLine2 := ""
+	for i, c := range checks {
+		mark := "✓"
+		if !c.passed {
+			mark = "✗"
 		}
-		log.Printf("Identity keypair verified: matches vote account's validator")
+		checkStr := c.name + " " + mark + "  "
+		if i < 4 {
+			checksLine1 += checkStr
+		} else {
+			checksLine2 += checkStr
+		}
+	}
+	log.Printf("║  Checks           %-58s║", strings.TrimSpace(checksLine1))
+	if checksLine2 != "" {
+		log.Printf("║                   %-58s║", strings.TrimSpace(checksLine2))
+	}
+	log.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+
+	// If any check failed, print error and exit
+	if failedCheck != nil {
+		log.Fatalf("Error: %s", failedCheck.errMsg)
 	}
 
-	// Step 6: Check if vote account is delinquent at startup
-	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)
+	// === Continue with monitoring ===
 
 	if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
 		// Delinquent after retries, trigger failover

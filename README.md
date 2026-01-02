@@ -227,41 +227,76 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 
 ## Example Output
 
-### Healthy Node
+### Successful Startup (ACTIVE node)
 
 ```
-2025/12/24 12:52:50.981144 Starting automatic failover manager...
-2025/12/24 12:52:50.981717 Local RPC: http://localhost:8899
-2025/12/24 12:52:50.981885 Checking local node health...
-2025/12/24 12:52:52.202651 Local node is healthy
-2025/12/24 12:52:52.227780 Client: Agave
-2025/12/24 12:52:52.227818 Version: 3.1.4
-2025/12/24 12:52:52.227824 Performing detailed health check...
-2025/12/24 12:52:52.496518 Health check result:
-2025/12/24 12:52:52.496602   Identity: 9iEjL9jaEx1FNTqJHGjarbjoLoqNVbFtRfGDfX2txyQn
-2025/12/24 12:52:52.496613   Healthy: true (from getHealth RPC)
-2025/12/24 12:52:52.496617   Gossip status:
-2025/12/24 12:52:52.496620     In gossip: true
-2025/12/24 12:52:52.496622     Gossip address: 64.130.42.168:8001
-2025/12/24 12:52:52.496624     TCP reachable: true
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        Automatic Failover Manager                            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Vote Account     DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA              ║
+║  Status           ACTIVE                                                     ║
+║  Latency Limit    50 slots                                                   ║
+║  Client           Frankendancer 0.806.30102                                  ║
+║  Active Identity  HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL              ║
+║  Failover Key     CL6kvcozv6BDnXA3vQKnq8VjwrNx31zMo24Erpi6SNcE              ║
+║  Checks           Health ✓  Gossip ✓  CLI ✓  Config ✓                       ║
+║                   Keypair ✓  Identity ✓  Vote ✓  Mode ✓                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+Vote account is NOT delinquent (slots behind: 1)
+Monitoring every 1s (latency threshold: 50 slots)...
+Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
 ```
 
-**Interpretation:** Hot spare is ready — node is healthy, visible in gossip, and gossip port is reachable.
+### Successful Startup (STANDBY node)
 
----
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        Automatic Failover Manager                            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Vote Account     DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA              ║
+║  Status           STANDBY                                                    ║
+║  Latency Limit    delinquency only (~150 slots)                             ║
+║  Client           Agave 3.1.5                                                ║
+║  Active Identity  5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K              ║
+║  Failover Key     HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL              ║
+║  Checks           Health ✓  Gossip ✓  CLI ✓  Config ✓                       ║
+║                   Keypair ✓  Identity ✓  Vote ✓  Mode ✓                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+Vote account is NOT delinquent (slots behind: 1)
+Monitoring every 1s (delinquency only)...
+Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
+```
+
+### Failed Check (Mode error)
+
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        Automatic Failover Manager                            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Vote Account     DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA              ║
+║  Status           STANDBY                                                    ║
+║  Latency Limit    delinquency only (~150 slots)                             ║
+║  Client           Agave 3.1.5                                                ║
+║  Active Identity  5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K              ║
+║  Failover Key     3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z              ║
+║  Checks           Health ✓  Gossip ✓  CLI ✓  Config ✓                       ║
+║                   Keypair ✓  Identity ✓  Vote ✓  Mode ✗                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+Error: On STANDBY node, --identity-keypair must match voting identity (HH1d1t8...)
+```
 
 ### Unhealthy Node (Waiting)
 
 ```
-2025/12/24 12:44:59.202593 Starting automatic failover manager...
-2025/12/24 12:44:59.202719 Local RPC: http://127.0.0.1:8899
-2025/12/24 12:44:59.202944 Checking local node health...
-2025/12/24 12:45:02.205974 Node not healthy yet: failed to make request: Post "http://127.0.0.1:8899": dial tcp 127.0.0.1:8899: connect: connection refused
-2025/12/24 12:45:05.206356 Node not healthy yet: failed to make request: Post "http://127.0.0.1:8899": dial tcp 127.0.0.1:8899: connect: connection refused
-2025/12/24 12:45:08.206463 Node not healthy yet: failed to make request: Post "http://127.0.0.1:8899": dial tcp 127.0.0.1:8899: connect: connection refused
+Waiting for node to become healthy...
+Node not healthy yet: failed to make request: dial tcp 127.0.0.1:8899: connection refused
+Node not healthy yet: failed to make request: dial tcp 127.0.0.1:8899: connection refused
+Node is now healthy
+╔══════════════════════════════════════════════════════════════════════════════╗
+...
 ```
 
-**Interpretation:** Local node is not responding. The tool will retry every 3 seconds until the node becomes healthy.
+**Interpretation:** The tool will retry every 3 seconds until the node becomes healthy, then display the status table.
 
 ---
 

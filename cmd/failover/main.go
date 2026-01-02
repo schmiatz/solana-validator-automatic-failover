@@ -277,7 +277,7 @@ func main() {
 	if config.MaxVoteLatency > 0 {
 		printLine(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
 	} else {
-		printLine(tableRow("Latency Limit", "delinquency only (~150 slots)"))
+		printLine(tableRow("Latency Limit", "delinquency"))
 	}
 	clientVersion := fmt.Sprintf("%s %s", localResult.ClientType, localResult.Version)
 	printLine(tableRow("Client", clientVersion))

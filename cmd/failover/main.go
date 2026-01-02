@@ -183,7 +183,21 @@ func main() {
 	}
 	log.Printf("Identity check passed: provided keypair is not active")
 
-	// Step 4: Check if vote account is delinquent at startup
+	// Step 4: Check if this node is the active validator for the vote account
+	log.Printf("Checking if this node is the active validator for vote account %s...", config.VotePubkey)
+	voteAccountResult, err := checker.Check(config.VotePubkey)
+	if err != nil {
+		log.Fatalf("Error checking vote account: %v", err)
+	}
+
+	if voteAccountResult.NodePubkey == localResult.Identity {
+		log.Printf("Node status: ACTIVE (this node is currently validating for vote account %s)", config.VotePubkey)
+		log.Fatal("Error: Running on an active validator is not yet supported. Exiting.")
+	} else {
+		log.Printf("Node status: STANDBY (vote account is being validated by %s)", voteAccountResult.NodePubkey)
+	}
+
+	// Step 6: Check if vote account is delinquent at startup
 	log.Printf("Checking if vote account %s is delinquent...", config.VotePubkey)
 
 	if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
@@ -192,7 +206,7 @@ func main() {
 		return
 	}
 
-	// Step 5: Continuous monitoring
+	// Step 7: Continuous monitoring
 	monitorVoteAccount(ctx, checker, &config)
 }
 

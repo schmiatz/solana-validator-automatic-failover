@@ -75,6 +75,7 @@ type CheckResult struct {
 	LastVote    uint64
 	SlotsBehind int64
 	Delinquent  bool
+	NodePubkey  string
 	Gossip      *GossipInfo
 	Error       error
 }
@@ -101,6 +102,7 @@ func (c *Checker) Check(votePubkey string) (*CheckResult, error) {
 	result.LastVote = voteInfo.LastVote
 	result.SlotsBehind = voteInfo.SlotsBehind
 	result.Delinquent = voteInfo.Delinquent
+	result.NodePubkey = voteInfo.NodePubkey
 	result.Healthy = !voteInfo.Delinquent
 
 	// Check gossip status

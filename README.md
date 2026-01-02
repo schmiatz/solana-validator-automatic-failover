@@ -267,7 +267,7 @@ When triggered, the tool executes the appropriate set-identity command:
 
 **Frankendancer:**
 ```bash
-fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json>
+fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json> --force
 ```
 
 **Agave:**

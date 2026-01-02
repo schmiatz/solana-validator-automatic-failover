@@ -373,9 +373,9 @@ func triggerFailover(reason string, config *Config) {
 
 	switch config.ClientType {
 	case "Frankendancer":
-		// fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json>
-		cmdStr = "fdctl set-identity --config " + config.ConfigPath + " " + config.IdentityKeypair
-		cmd = exec.Command("fdctl", "set-identity", "--config", config.ConfigPath, config.IdentityKeypair)
+		// fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json> --force
+		cmdStr = "fdctl set-identity --config " + config.ConfigPath + " " + config.IdentityKeypair + " --force"
+		cmd = exec.Command("fdctl", "set-identity", "--config", config.ConfigPath, config.IdentityKeypair, "--force")
 	case "Agave":
 		// agave-validator --ledger </path/to/validator-ledger> set-identity <path/to/keypair.json>
 		cmdStr = "agave-validator --ledger " + config.LedgerPath + " set-identity " + config.IdentityKeypair

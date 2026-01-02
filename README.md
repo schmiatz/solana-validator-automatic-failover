@@ -29,7 +29,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 | `--config` | **Frankendancer only** | - | Path to config.toml (required for Frankendancer nodes) |
 | `--ledger` | **Agave only** | - | Path to validator ledger directory (required for Agave nodes) |
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
-| `--max-vote-latency` | No | delinquency (~150) | Trigger failover when this many slots behind (default: only on delinquency) |
+| `--max-vote-latency` | No | delinquency | Trigger failover when this many slots behind (default: only on delinquency) |
 | `--retry-count` | No | `3` | Number of retries before triggering failover |
 | `--pagerduty-key` | No | - | PagerDuty routing key for alerts on failover |
 | `--webhook-url` | No | - | Generic webhook URL to POST on failover |
@@ -230,19 +230,22 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 ### Successful Startup (ACTIVE node)
 
 ```
+2026/01/02 16:42:13 Starting Automatic Failover Manager:
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        Automatic Failover Manager                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Vote Account     DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA              ║
-║  Status           ACTIVE                                                     ║
-║  Latency Limit    50 slots                                                   ║
-║  Client           Frankendancer 0.806.30102                                  ║
-║  Active Identity  HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL              ║
-║  Failover Key     CL6kvcozv6BDnXA3vQKnq8VjwrNx31zMo24Erpi6SNcE              ║
-║  Checks           Health ✓  Gossip ✓  PATH ✓  Config ✓                      ║
-║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✓                   ║
+║  Vote Account       DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA             ║
+║  Status             ACTIVE                                                   ║
+║  Latency Limit      50 slots                                                 ║
+║  Client             Frankendancer 0.806.30102                                ║
+║  Active Identity    HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL             ║
+║  Failover Key       CL6kvcozv6BDnXA3vQKnq8VjwrNx31zMo24Erpi6SNcE             ║
+║  Alerting           PagerDuty                                                ║
+║  Logfile            /home/solana/failover.log                                ║
+║  Checks             Health ✓  Gossip ✓  PATH ✓  Config ✓                     ║
+║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✓                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-Starting Votelatency Monitoring every 1s:
+2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  Counts   Low: 1          │   Medium: 0        │   High: 0                   ║
 ║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
@@ -252,19 +255,22 @@ Starting Votelatency Monitoring every 1s:
 ### Successful Startup (STANDBY node)
 
 ```
+2026/01/02 16:42:13 Starting Automatic Failover Manager:
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        Automatic Failover Manager                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Vote Account     DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA              ║
-║  Status           STANDBY                                                    ║
-║  Latency Limit    delinquency only (~150 slots)                             ║
-║  Client           Agave 3.1.5                                                ║
-║  Active Identity  5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K              ║
-║  Failover Key     HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL              ║
-║  Checks           Health ✓  Gossip ✓  PATH ✓  Ledger ✓                      ║
-║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✓                   ║
+║  Vote Account       DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA             ║
+║  Status             STANDBY                                                  ║
+║  Latency Limit      delinquency                                              ║
+║  Client             Agave 3.1.5                                              ║
+║  Active Identity    5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K             ║
+║  Failover Key       HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL             ║
+║  Alerting           Disabled                                                 ║
+║  Logfile            Disabled                                                 ║
+║  Checks             Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
+║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✓                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-Starting Votelatency Monitoring every 1s:
+2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  Counts   Low: 1          │   Medium: 0        │   High: 0                   ║
 ║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
@@ -274,17 +280,20 @@ Starting Votelatency Monitoring every 1s:
 ### Failed Check (Mode error)
 
 ```
+2026/01/02 16:42:13 Starting Automatic Failover Manager:
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        Automatic Failover Manager                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Vote Account     DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA              ║
-║  Status           STANDBY                                                    ║
-║  Latency Limit    delinquency only (~150 slots)                             ║
-║  Client           Agave 3.1.5                                                ║
-║  Active Identity  5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K              ║
-║  Failover Key     3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z              ║
-║  Checks           Health ✓  Gossip ✓  PATH ✓  Ledger ✓                      ║
-║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✗                   ║
+║  Vote Account       DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA             ║
+║  Status             STANDBY                                                  ║
+║  Latency Limit      delinquency                                              ║
+║  Client             Agave 3.1.5                                              ║
+║  Active Identity    5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K             ║
+║  Failover Key       3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z             ║
+║  Alerting           Disabled                                                 ║
+║  Logfile            Disabled                                                 ║
+║  Checks             Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
+║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✗                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 Error: On STANDBY node, --identity-keypair must match voting identity (HH1d1t8...)
 ```
@@ -309,7 +318,7 @@ Node is now healthy
 During monitoring, the terminal shows a compact box display that updates in place:
 
 ```
-Starting Votelatency Monitoring every 1s:
+2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  Counts   Low: 847        │   Medium: 12       │   High: 0                   ║
 ║  Status   Slot: 379082824 │   Last vote: 379082823   │   Latency: 1          ║

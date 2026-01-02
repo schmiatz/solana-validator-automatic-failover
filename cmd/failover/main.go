@@ -113,9 +113,9 @@ func main() {
 
 	// === Collect all check results ===
 	type checkResult struct {
-		name    string
-		passed  bool
-		errMsg  string
+		name   string
+		passed bool
+		errMsg string
 	}
 	var checks []checkResult
 	var failedCheck *checkResult
@@ -402,9 +402,22 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		log.Printf("Monitoring every %v (delinquency only)...", checkInterval)
 	}
 
+	// Latency counters
+	var lowCount, mediumCount, highCount uint64
+	useInlineOutput := config.LogFile == "" // Only use inline updates if not logging to file
+
+	// Print initial empty lines for inline update area
+	if useInlineOutput {
+		fmt.Println() // Line for counters
+		fmt.Println() // Line for current status
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			if useInlineOutput {
+				fmt.Println() // Move to new line before exit message
+			}
 			log.Println("Monitoring stopped due to shutdown signal")
 			return
 		case <-ticker.C:
@@ -414,12 +427,34 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				continue
 			}
 
-			// Always print current status
-			log.Printf("Current slot: %d | Last vote: %d | Vote latency: %d",
-				result.CurrentSlot, result.LastVote, result.SlotsBehind)
+			// Update latency counters
+			latency := result.SlotsBehind
+			if latency <= 2 {
+				lowCount++
+			} else if latency <= 10 {
+				mediumCount++
+			} else {
+				highCount++
+			}
+
+			// Display status
+			if useInlineOutput {
+				// Move cursor up 2 lines and clear, then print both lines
+				fmt.Print("\033[2A\033[K") // Move up 2, clear line
+				fmt.Printf("Latency: Low(1-2): %d | Medium(3-10): %d | High(11+): %d\n", lowCount, mediumCount, highCount)
+				fmt.Print("\033[K") // Clear line
+				fmt.Printf("Slot: %d | Last vote: %d | Vote latency: %d\n", result.CurrentSlot, result.LastVote, latency)
+			} else {
+				// Traditional logging for log files (less frequent)
+				log.Printf("Slot: %d | Last vote: %d | Latency: %d | Counts: L=%d M=%d H=%d",
+					result.CurrentSlot, result.LastVote, latency, lowCount, mediumCount, highCount)
+			}
 
 			// Check for delinquency
 			if result.Delinquent {
+				if useInlineOutput {
+					fmt.Println() // New line before warning
+				}
 				log.Printf("WARNING: Vote account is DELINQUENT!")
 
 				// Verify with retries before triggering failover
@@ -428,11 +463,18 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 					return
 				}
 				log.Println("Delinquency recovered, continuing monitoring...")
+				if useInlineOutput {
+					fmt.Println() // Line for counters
+					fmt.Println() // Line for current status
+				}
 				continue
 			}
 
 			// Check latency threshold (if set)
 			if config.MaxVoteLatency > 0 && result.SlotsBehind > config.MaxVoteLatency {
+				if useInlineOutput {
+					fmt.Println() // New line before warning
+				}
 				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
 
 				// Verify with retries before triggering failover
@@ -441,6 +483,10 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 					return
 				}
 				log.Println("Latency recovered, continuing monitoring...")
+				if useInlineOutput {
+					fmt.Println() // Line for counters
+					fmt.Println() // Line for current status
+				}
 			}
 		}
 	}

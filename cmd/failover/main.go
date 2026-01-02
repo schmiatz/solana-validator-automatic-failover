@@ -77,11 +77,10 @@ func main() {
 		WebhookBody:      *webhookBody,
 	}
 
-	// Set up logging
+	// Set up logging - always to stdout only for clean inline updates
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
-	// If log file is specified, open it for direct writes during monitoring
-	// The log package stays on stdout only for clean inline updates
+	// If log file is specified, open it for direct writes
 	if config.LogFile != "" {
 		logFileHandle, err := os.OpenFile(config.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
@@ -89,10 +88,6 @@ func main() {
 		}
 		defer logFileHandle.Close()
 		config.LogFileHandle = logFileHandle
-
-		// For startup messages, write to both stdout and file
-		multiWriter := io.MultiWriter(os.Stdout, logFileHandle)
-		log.SetOutput(multiWriter)
 	}
 
 	// Create context that listens for shutdown signals
@@ -405,12 +400,6 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		log.Printf("Monitoring every %v (delinquency only)...", checkInterval)
 	}
 
-	// Switch log output to stdout only for monitoring (inline updates)
-	// Log file will be written to separately
-	if config.LogFileHandle != nil {
-		log.SetOutput(os.Stdout)
-	}
-
 	// Latency counters
 	var lowCount, mediumCount, highCount uint64
 
@@ -420,6 +409,16 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
 			fmt.Fprintf(config.LogFileHandle, timestamp+" "+format+"\n", args...)
 		}
+	}
+
+	// Helper to get latency category
+	getCategory := func(latency int64) string {
+		if latency <= 2 {
+			return "Low"
+		} else if latency <= 10 {
+			return "Medium"
+		}
+		return "High"
 	}
 
 	// Print initial empty lines for inline update area on stdout
@@ -441,8 +440,9 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				continue
 			}
 
-			// Update latency counters
+			// Update latency counters and get category
 			latency := result.SlotsBehind
+			category := getCategory(latency)
 			if latency <= 2 {
 				lowCount++
 			} else if latency <= 10 {
@@ -457,9 +457,9 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			fmt.Print("\033[K") // Clear line
 			fmt.Printf("Slot: %d | Last vote: %d | Vote latency: %d\n", result.CurrentSlot, result.LastVote, latency)
 
-			// Write detailed log to file
-			logToFile("Current slot: %d | Last vote: %d | Vote latency: %d",
-				result.CurrentSlot, result.LastVote, latency)
+			// Write detailed log to file with category
+			logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
+				result.CurrentSlot, result.LastVote, category, latency)
 
 			// Check for delinquency
 			if result.Delinquent {

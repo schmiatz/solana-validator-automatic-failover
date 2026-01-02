@@ -400,11 +400,14 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	// Print monitoring header
-	fmt.Println("Starting Votelatency Monitoring every 1s:")
+	// Print monitoring header with timestamp
+	log.Println("Starting Votelatency Monitoring every 1s:")
 
 	// Latency counters
 	var lowCount, mediumCount, highCount uint64
+
+	// Indentation to align with log timestamp (27 chars)
+	const indent = "                           "
 
 	// Helper to write to log file
 	logToFile := func(format string, args ...interface{}) {
@@ -424,11 +427,11 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		return "High"
 	}
 
-	// Print initial box frame for inline update area
-	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                                                                              ║")
-	fmt.Println("║                                                                              ║")
-	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	// Print initial box frame for inline update area (indented to align with startup table)
+	fmt.Println(indent + "╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println(indent + "║                                                                              ║")
+	fmt.Println(indent + "║                                                                              ║")
+	fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
 
 	for {
 		select {
@@ -461,8 +464,8 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				lowCount, mediumCount, highCount)
 			statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
 				result.CurrentSlot, result.LastVote, latency)
-			countsLine := fmt.Sprintf("║%-78s║", countsContent)
-			statusLine := fmt.Sprintf("║%-78s║", statusContent)
+			countsLine := indent + fmt.Sprintf("║%-78s║", countsContent)
+			statusLine := indent + fmt.Sprintf("║%-78s║", statusContent)
 
 			// Move up 3 lines (to the first content line inside the box) and update
 			fmt.Print("\033[3A")    // Move up 3 lines
@@ -471,7 +474,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			fmt.Print("\033[K")     // Clear line
 			fmt.Println(statusLine) // Print status
 			fmt.Print("\033[K")     // Clear line
-			fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+			fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
 
 			// Write detailed log to file with category
 			logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
@@ -491,10 +494,10 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				log.Println("Delinquency recovered, continuing monitoring...")
 				logToFile("Delinquency recovered, continuing monitoring...")
 				// Reprint box frame
-				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				fmt.Println(indent + "╔══════════════════════════════════════════════════════════════════════════════╗")
+				fmt.Println(indent + "║                                                                              ║")
+				fmt.Println(indent + "║                                                                              ║")
+				fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
 				continue
 			}
 
@@ -512,10 +515,10 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				log.Println("Latency recovered, continuing monitoring...")
 				logToFile("Latency recovered, continuing monitoring...")
 				// Reprint box frame
-				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				fmt.Println(indent + "╔══════════════════════════════════════════════════════════════════════════════╗")
+				fmt.Println(indent + "║                                                                              ║")
+				fmt.Println(indent + "║                                                                              ║")
+				fmt.Println(indent + "╚══════════════════════════════════════════════════════════════════════════════╝")
 			}
 		}
 	}

@@ -34,7 +34,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 | `--pagerduty-key` | No | - | PagerDuty routing key for alerts on failover |
 | `--webhook-url` | No | - | Generic webhook URL to POST on failover |
 | `--webhook-body` | No | - | Custom webhook body (supports `{reason}`, `{identity}` placeholders) |
-| `--log` | No | - | Path to log file (logs to stdout and file if set) |
+| `--log` | No | - | Path to log file for detailed per-check logging (see below) |
 
 ### Example
 
@@ -295,6 +295,40 @@ Node is now healthy
 ```
 
 **Interpretation:** The tool will retry every 3 seconds until the node becomes healthy, then display the status table.
+
+---
+
+### Monitoring Output
+
+During monitoring, the terminal shows a compact two-line display that updates in place:
+
+```
+Latency: Low(1-2): 847 | Medium(3-10): 12 | High(11+): 0
+Slot: 379082824 | Last vote: 379082823 | Vote latency: 1
+```
+
+| Counter | Latency Range | Meaning |
+|---------|---------------|---------|
+| Low | 1-2 slots | Excellent - voting within ~800ms |
+| Medium | 3-10 slots | Acceptable - 1-4 seconds behind |
+| High | 11+ slots | Concerning - approaching warning zone |
+
+#### Detailed Logging with `--log`
+
+When `--log /path/to/file.log` is specified, the terminal continues showing the compact inline display, while the log file receives detailed per-check output:
+
+```
+2026/01/02 16:04:18.155751 Slot: 379082648 | Last vote: 379082647 | Category: Low | Latency: 1
+2026/01/02 16:04:19.156359 Slot: 379082651 | Last vote: 379082650 | Category: Low | Latency: 1
+2026/01/02 16:04:37.157293 Slot: 379082697 | Last vote: 379082695 | Category: Low | Latency: 2
+2026/01/02 16:05:11.157280 Slot: 379082785 | Last vote: 379082780 | Category: Medium | Latency: 5
+2026/01/02 16:05:45.156892 Slot: 379082820 | Last vote: 379082805 | Category: High | Latency: 15
+```
+
+This allows you to:
+- Monitor in real-time with a clean terminal display
+- Analyze historical latency patterns from the log file
+- Debug issues by reviewing the full slot-by-slot history
 
 ---
 

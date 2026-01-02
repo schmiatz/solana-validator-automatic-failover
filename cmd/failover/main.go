@@ -394,11 +394,8 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	if config.MaxVoteLatency > 0 {
-		log.Printf("Monitoring every %v (latency threshold: %d slots)...", checkInterval, config.MaxVoteLatency)
-	} else {
-		log.Printf("Monitoring every %v (delinquency only)...", checkInterval)
-	}
+	// Print monitoring header
+	fmt.Println("Starting Votelatency Monitoring every 1s:")
 
 	// Latency counters
 	var lowCount, mediumCount, highCount uint64
@@ -421,9 +418,11 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		return "High"
 	}
 
-	// Print initial empty lines for inline update area on stdout
-	fmt.Println() // Line for counters
-	fmt.Println() // Line for current status
+	// Print initial box frame for inline update area
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                                                                              ║")
+	fmt.Println("║                                                                              ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 	for {
 		select {
@@ -451,11 +450,20 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				highCount++
 			}
 
-			// Inline update on stdout (move up 2 lines, clear, reprint)
-			fmt.Print("\033[2A\033[K") // Move up 2, clear line
-			fmt.Printf("Latency: Low(1-2): %d | Medium(3-10): %d | High(11+): %d\n", lowCount, mediumCount, highCount)
-			fmt.Print("\033[K") // Clear line
-			fmt.Printf("Slot: %d | Last vote: %d | Vote latency: %d\n", result.CurrentSlot, result.LastVote, latency)
+			// Build the two content lines
+			countsLine := fmt.Sprintf("║  Counts   Low: %-8d │   Medium: %-8d │   High: %-8d         ║",
+				lowCount, mediumCount, highCount)
+			statusLine := fmt.Sprintf("║  Status   Slot: %-12d │   Last vote: %-12d │   Latency: %-4d ║",
+				result.CurrentSlot, result.LastVote, latency)
+
+			// Move up 3 lines (to the first content line inside the box) and update
+			fmt.Print("\033[3A")      // Move up 3 lines
+			fmt.Print("\033[K")       // Clear line
+			fmt.Println(countsLine)   // Print counts
+			fmt.Print("\033[K")       // Clear line
+			fmt.Println(statusLine)   // Print status
+			fmt.Print("\033[K")       // Clear line
+			fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 			// Write detailed log to file with category
 			logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
@@ -474,8 +482,11 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				}
 				log.Println("Delinquency recovered, continuing monitoring...")
 				logToFile("Delinquency recovered, continuing monitoring...")
-				fmt.Println() // Line for counters
-				fmt.Println() // Line for current status
+				// Reprint box frame
+				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 				continue
 			}
 
@@ -492,8 +503,11 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				}
 				log.Println("Latency recovered, continuing monitoring...")
 				logToFile("Latency recovered, continuing monitoring...")
-				fmt.Println() // Line for counters
-				fmt.Println() // Line for current status
+				// Reprint box frame
+				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("║                                                                              ║")
+				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 			}
 		}
 	}

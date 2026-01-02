@@ -242,8 +242,11 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 ║  Checks           Health ✓  Gossip ✓  PATH ✓  Config ✓                      ║
 ║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✓                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-Monitoring every 1s (latency threshold: 50 slots)...
-Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
+Starting Votelatency Monitoring every 1s:
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  Counts   Low: 1          │   Medium: 0        │   High: 0                   ║
+║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ### Successful Startup (STANDBY node)
@@ -261,8 +264,11 @@ Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
 ║  Checks           Health ✓  Gossip ✓  PATH ✓  Ledger ✓                      ║
 ║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✓                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-Monitoring every 1s (delinquency only)...
-Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
+Starting Votelatency Monitoring every 1s:
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  Counts   Low: 1          │   Medium: 0        │   High: 0                   ║
+║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ### Failed Check (Mode error)
@@ -300,11 +306,14 @@ Node is now healthy
 
 ### Monitoring Output
 
-During monitoring, the terminal shows a compact two-line display that updates in place:
+During monitoring, the terminal shows a compact box display that updates in place:
 
 ```
-Latency: Low(1-2): 847 | Medium(3-10): 12 | High(11+): 0
-Slot: 379082824 | Last vote: 379082823 | Vote latency: 1
+Starting Votelatency Monitoring every 1s:
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  Counts   Low: 847        │   Medium: 12       │   High: 0                   ║
+║  Status   Slot: 379082824 │   Last vote: 379082823   │   Latency: 1          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 | Counter | Latency Range | Meaning |

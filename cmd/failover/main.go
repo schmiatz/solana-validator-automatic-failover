@@ -450,19 +450,21 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				highCount++
 			}
 
-			// Build the two content lines
-			countsLine := fmt.Sprintf("║  Counts   Low: %-8d │   Medium: %-8d │   High: %-8d         ║",
+			// Build the two content lines (78 chars inside borders to match 80-char box)
+			countsContent := fmt.Sprintf("  Counts   Low: %-8d │   Medium: %-8d │   High: %-8d",
 				lowCount, mediumCount, highCount)
-			statusLine := fmt.Sprintf("║  Status   Slot: %-12d │   Last vote: %-12d │   Latency: %-4d ║",
+			statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
 				result.CurrentSlot, result.LastVote, latency)
+			countsLine := fmt.Sprintf("║%-78s║", countsContent)
+			statusLine := fmt.Sprintf("║%-78s║", statusContent)
 
 			// Move up 3 lines (to the first content line inside the box) and update
-			fmt.Print("\033[3A")      // Move up 3 lines
-			fmt.Print("\033[K")       // Clear line
-			fmt.Println(countsLine)   // Print counts
-			fmt.Print("\033[K")       // Clear line
-			fmt.Println(statusLine)   // Print status
-			fmt.Print("\033[K")       // Clear line
+			fmt.Print("\033[3A")    // Move up 3 lines
+			fmt.Print("\033[K")     // Clear line
+			fmt.Println(countsLine) // Print counts
+			fmt.Print("\033[K")     // Clear line
+			fmt.Println(statusLine) // Print status
+			fmt.Print("\033[K")     // Clear line
 			fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 			// Write detailed log to file with category

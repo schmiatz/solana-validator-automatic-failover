@@ -192,11 +192,17 @@ func main() {
 
 	if voteAccountResult.NodePubkey == localResult.Identity {
 		log.Printf("Node status: ACTIVE (this node is currently validating for vote account %s)", config.VotePubkey)
-		log.Fatal("Error: Running on an active validator is not yet supported. Exiting.")
+
+		// Step 5 (active): Verify that --identity-keypair is DIFFERENT from vote account's validator
+		// This ensures we would failover to an unstaked keypair
+		if keypairPubkey == voteAccountResult.NodePubkey {
+			log.Fatalf("Error: Identity keypair is the staked identity. On an active node, --identity-keypair must be an unstaked keypair for failover.")
+		}
+		log.Printf("Identity keypair verified: is an unstaked keypair (%s)", keypairPubkey)
 	} else {
 		log.Printf("Node status: STANDBY (vote account is being validated by %s)", voteAccountResult.NodePubkey)
 
-		// Step 5: Verify that --identity-keypair matches the vote account's current validator
+		// Step 5 (standby): Verify that --identity-keypair matches the vote account's current validator
 		// This ensures we're failing over to the correct identity
 		if keypairPubkey != voteAccountResult.NodePubkey {
 			log.Fatalf("Error: Identity keypair mismatch. The provided keypair (%s) does not match the vote account's validator (%s)",

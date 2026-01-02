@@ -247,7 +247,7 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 ╚══════════════════════════════════════════════════════════════════════════════╝
 2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  Counts   Low: 1          │   Medium: 0        │   High: 0                   ║
+║  Counts   Low[≤2]: 1      │   Medium[3-10]: 0      │   High[11+]: 0          ║
 ║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -272,7 +272,7 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 ╚══════════════════════════════════════════════════════════════════════════════╝
 2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  Counts   Low: 1          │   Medium: 0        │   High: 0                   ║
+║  Counts   Low[≤2]: 1      │   Medium[3-10]: 0      │   High[11+]: 0          ║
 ║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -320,16 +320,15 @@ During monitoring, the terminal shows a compact box display that updates in plac
 ```
 2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  Counts   Low: 847        │   Medium: 12       │   High: 0                   ║
+║  Counts   Low[≤2]: 847    │   Medium[3-10]: 12     │   High[11+]: 0          ║
 ║  Status   Slot: 379082824 │   Last vote: 379082823   │   Latency: 1          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
-| Counter | Latency Range | Meaning |
-|---------|---------------|---------|
-| Low | 1-2 slots | Excellent - voting within ~800ms |
-| Medium | 3-10 slots | Acceptable - 1-4 seconds behind |
-| High | 11+ slots | Concerning - approaching warning zone |
+The thresholds are shown in brackets:
+- **Low[≤2]**: Excellent - voting within ~800ms
+- **Medium[3-10]**: Acceptable - 1-4 seconds behind
+- **High[11+]**: Concerning - approaching warning zone
 
 #### Detailed Logging with `--log`
 

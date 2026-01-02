@@ -494,7 +494,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			}
 
 			// Build the two content lines (78 chars inside borders to match 80-char box)
-			countsContent := fmt.Sprintf("  Counts   Low: %-8d │   Medium: %-8d │   High: %-8d",
+			countsContent := fmt.Sprintf("  Counts   Low[≤2]: %-6d │   Medium[3-10]: %-6d │   High[11+]: %-5d",
 				lowCount, mediumCount, highCount)
 			statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
 				result.CurrentSlot, result.LastVote, latency)

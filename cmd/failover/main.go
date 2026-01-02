@@ -25,6 +25,7 @@ import (
 type Config struct {
 	LocalRPCEndpoint string
 	LogFile          string
+	LogFileHandle    *os.File // Handle to log file for direct writes
 	VotePubkey       string
 	MaxVoteLatency   int64
 	RetryCount       int
@@ -79,15 +80,17 @@ func main() {
 	// Set up logging
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
-	// If log file is specified, write to both stdout and file
+	// If log file is specified, open it for direct writes during monitoring
+	// The log package stays on stdout only for clean inline updates
 	if config.LogFile != "" {
 		logFileHandle, err := os.OpenFile(config.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			log.Fatalf("Failed to open log file %s: %v", config.LogFile, err)
 		}
 		defer logFileHandle.Close()
+		config.LogFileHandle = logFileHandle
 
-		// Write to both stdout and log file
+		// For startup messages, write to both stdout and file
 		multiWriter := io.MultiWriter(os.Stdout, logFileHandle)
 		log.SetOutput(multiWriter)
 	}
@@ -402,28 +405,39 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		log.Printf("Monitoring every %v (delinquency only)...", checkInterval)
 	}
 
+	// Switch log output to stdout only for monitoring (inline updates)
+	// Log file will be written to separately
+	if config.LogFileHandle != nil {
+		log.SetOutput(os.Stdout)
+	}
+
 	// Latency counters
 	var lowCount, mediumCount, highCount uint64
-	useInlineOutput := config.LogFile == "" // Only use inline updates if not logging to file
 
-	// Print initial empty lines for inline update area
-	if useInlineOutput {
-		fmt.Println() // Line for counters
-		fmt.Println() // Line for current status
+	// Helper to write to log file
+	logToFile := func(format string, args ...interface{}) {
+		if config.LogFileHandle != nil {
+			timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
+			fmt.Fprintf(config.LogFileHandle, timestamp+" "+format+"\n", args...)
+		}
 	}
+
+	// Print initial empty lines for inline update area on stdout
+	fmt.Println() // Line for counters
+	fmt.Println() // Line for current status
 
 	for {
 		select {
 		case <-ctx.Done():
-			if useInlineOutput {
-				fmt.Println() // Move to new line before exit message
-			}
+			fmt.Println() // Move to new line before exit message
 			log.Println("Monitoring stopped due to shutdown signal")
+			logToFile("Monitoring stopped due to shutdown signal")
 			return
 		case <-ticker.C:
 			result, err := checker.Check(config.VotePubkey)
 			if err != nil {
 				log.Printf("Error checking vote account: %v", err)
+				logToFile("Error checking vote account: %v", err)
 				continue
 			}
 
@@ -437,25 +451,21 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				highCount++
 			}
 
-			// Display status
-			if useInlineOutput {
-				// Move cursor up 2 lines and clear, then print both lines
-				fmt.Print("\033[2A\033[K") // Move up 2, clear line
-				fmt.Printf("Latency: Low(1-2): %d | Medium(3-10): %d | High(11+): %d\n", lowCount, mediumCount, highCount)
-				fmt.Print("\033[K") // Clear line
-				fmt.Printf("Slot: %d | Last vote: %d | Vote latency: %d\n", result.CurrentSlot, result.LastVote, latency)
-			} else {
-				// Traditional logging for log files (less frequent)
-				log.Printf("Slot: %d | Last vote: %d | Latency: %d | Counts: L=%d M=%d H=%d",
-					result.CurrentSlot, result.LastVote, latency, lowCount, mediumCount, highCount)
-			}
+			// Inline update on stdout (move up 2 lines, clear, reprint)
+			fmt.Print("\033[2A\033[K") // Move up 2, clear line
+			fmt.Printf("Latency: Low(1-2): %d | Medium(3-10): %d | High(11+): %d\n", lowCount, mediumCount, highCount)
+			fmt.Print("\033[K") // Clear line
+			fmt.Printf("Slot: %d | Last vote: %d | Vote latency: %d\n", result.CurrentSlot, result.LastVote, latency)
+
+			// Write detailed log to file
+			logToFile("Current slot: %d | Last vote: %d | Vote latency: %d",
+				result.CurrentSlot, result.LastVote, latency)
 
 			// Check for delinquency
 			if result.Delinquent {
-				if useInlineOutput {
-					fmt.Println() // New line before warning
-				}
+				fmt.Println() // New line before warning
 				log.Printf("WARNING: Vote account is DELINQUENT!")
+				logToFile("WARNING: Vote account is DELINQUENT!")
 
 				// Verify with retries before triggering failover
 				if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
@@ -463,19 +473,17 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 					return
 				}
 				log.Println("Delinquency recovered, continuing monitoring...")
-				if useInlineOutput {
-					fmt.Println() // Line for counters
-					fmt.Println() // Line for current status
-				}
+				logToFile("Delinquency recovered, continuing monitoring...")
+				fmt.Println() // Line for counters
+				fmt.Println() // Line for current status
 				continue
 			}
 
 			// Check latency threshold (if set)
 			if config.MaxVoteLatency > 0 && result.SlotsBehind > config.MaxVoteLatency {
-				if useInlineOutput {
-					fmt.Println() // New line before warning
-				}
+				fmt.Println() // New line before warning
 				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
+				logToFile("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
 
 				// Verify with retries before triggering failover
 				if checkLatencyWithRetries(checker, config.VotePubkey, config.MaxVoteLatency, config.RetryCount) {
@@ -483,10 +491,9 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 					return
 				}
 				log.Println("Latency recovered, continuing monitoring...")
-				if useInlineOutput {
-					fmt.Println() // Line for counters
-					fmt.Println() // Line for current status
-				}
+				logToFile("Latency recovered, continuing monitoring...")
+				fmt.Println() // Line for counters
+				fmt.Println() // Line for current status
 			}
 		}
 	}

@@ -154,7 +154,7 @@ func main() {
 	// CLI check
 	requiredCmd := getRequiredCommand(localResult.ClientType)
 	pathPassed := requiredCmd == "" || isCommandAvailable(requiredCmd)
-	pathCheck := checkResult{name: "Path", passed: pathPassed}
+	pathCheck := checkResult{name: "PATH", passed: pathPassed}
 	if !pathPassed {
 		pathCheck.errMsg = fmt.Sprintf("Required command '%s' not found in PATH", requiredCmd)
 		if failedCheck == nil {
@@ -324,7 +324,6 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string, max
 		}
 
 		if !result.Delinquent {
-			log.Printf("Vote account is NOT delinquent (slots behind: %d)", result.SlotsBehind)
 			return false
 		}
 

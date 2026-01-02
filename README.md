@@ -239,10 +239,9 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 ║  Client           Frankendancer 0.806.30102                                  ║
 ║  Active Identity  HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL              ║
 ║  Failover Key     CL6kvcozv6BDnXA3vQKnq8VjwrNx31zMo24Erpi6SNcE              ║
-║  Checks           Health ✓  Gossip ✓  Path ✓  Config ✓                      ║
+║  Checks           Health ✓  Gossip ✓  PATH ✓  Config ✓                      ║
 ║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✓                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-Vote account is NOT delinquent (slots behind: 1)
 Monitoring every 1s (latency threshold: 50 slots)...
 Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
 ```
@@ -259,10 +258,9 @@ Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
 ║  Client           Agave 3.1.5                                                ║
 ║  Active Identity  5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K              ║
 ║  Failover Key     HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL              ║
-║  Checks           Health ✓  Gossip ✓  Path ✓  Ledger ✓                      ║
+║  Checks           Health ✓  Gossip ✓  PATH ✓  Ledger ✓                      ║
 ║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✓                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-Vote account is NOT delinquent (slots behind: 1)
 Monitoring every 1s (delinquency only)...
 Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
 ```
@@ -279,7 +277,7 @@ Current slot: 379074199 | Last vote: 379074198 | Vote latency: 1
 ║  Client           Agave 3.1.5                                                ║
 ║  Active Identity  5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K              ║
 ║  Failover Key     3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z              ║
-║  Checks           Health ✓  Gossip ✓  Path ✓  Ledger ✓                      ║
+║  Checks           Health ✓  Gossip ✓  PATH ✓  Ledger ✓                      ║
 ║                   Keypair ✓  Identity ✓  Voting ✓  Mode ✗                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 Error: On STANDBY node, --identity-keypair must match voting identity (HH1d1t8...)

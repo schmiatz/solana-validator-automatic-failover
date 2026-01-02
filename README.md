@@ -79,11 +79,11 @@ A tool to monitor Solana validator health and trigger automatic failover when is
    - If keypair doesn't match → continue (node is in standby mode)
 3. **Active/Standby detection**: Check if this node is the active validator for the vote account
    - Compares local node identity with vote account's `nodePubkey`
-   - If they match → **ACTIVE mode** (not yet supported, exits)
-   - If they don't match → **STANDBY mode** (continues)
-4. **Identity keypair verification** (standby only): Verify `--identity-keypair` matches the vote account's current validator
-   - Ensures you're failing over to the correct identity
-   - If mismatch → exit with error (wrong keypair provided)
+   - If they match → **ACTIVE mode**
+   - If they don't match → **STANDBY mode**
+4. **Identity keypair verification**: Different checks based on mode
+   - **ACTIVE mode**: Verify `--identity-keypair` is DIFFERENT from vote account's validator (must be unstaked)
+   - **STANDBY mode**: Verify `--identity-keypair` MATCHES the vote account's validator (must be staked)
 5. **Initial delinquency check**: Check if monitored vote account is already delinquent
    - If delinquent → retry 2x (1s apart) → trigger failover
 6. **Continuous monitoring**: Check vote account status every second
@@ -182,8 +182,8 @@ The tool performs the following checks on the **local node** to verify it's read
 
 | Status | Meaning | Action |
 |--------|---------|--------|
-| `ACTIVE` | This node is currently validating for the vote account | Exit (not yet supported) |
-| `STANDBY` | Another node is validating for the vote account | Continue to monitoring |
+| `ACTIVE` | This node is currently validating for the vote account | Continue (verify unstaked keypair) |
+| `STANDBY` | Another node is validating for the vote account | Continue (verify staked keypair) |
 
 ```
 2026/01/02 14:43:47.654035 Checking if this node is the active validator for vote account DvAmv...
@@ -192,23 +192,34 @@ The tool performs the following checks on the **local node** to verify it's read
 
 ---
 
-### Step 7: Identity Keypair Verification (Standby Only)
+### Step 7: Identity Keypair Verification
 
 **What it checks:**
-- Does the `--identity-keypair` pubkey match the vote account's current validator (`nodePubkey`)?
-- Ensures you're failing over to the correct identity
+- Validates `--identity-keypair` based on the detected mode
 
-| Result | Action |
-|--------|--------|
-| Match | Continue (correct keypair) |
-| Mismatch | Exit with error (wrong keypair provided) |
+| Mode | Required | Reason |
+|------|----------|--------|
+| **ACTIVE** | Keypair must be DIFFERENT from `nodePubkey` | Failover swaps TO an unstaked identity |
+| **STANDBY** | Keypair must MATCH `nodePubkey` | Failover swaps TO the staked identity |
 
+**ACTIVE mode success:**
 ```
-2026/01/02 14:43:47.165102 Identity keypair verified: matches vote account's validator
+Node status: ACTIVE (this node is currently validating for vote account DvAmv...)
+Identity keypair verified: is an unstaked keypair (3ELeRTT...)
 ```
 
-**Error example (wrong keypair):**
+**STANDBY mode success:**
 ```
+Node status: STANDBY (vote account is being validated by HH1d1t8...)
+Identity keypair verified: matches vote account's validator
+```
+
+**Error examples:**
+```
+# ACTIVE mode - wrong keypair (staked identity provided)
+Error: Identity keypair is the staked identity. On an active node, --identity-keypair must be an unstaked keypair for failover.
+
+# STANDBY mode - wrong keypair (doesn't match staked identity)
 Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not match the vote account's validator (HH1d1t8...)
 ```
 

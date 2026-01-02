@@ -344,7 +344,7 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			}
 
 			// Always print current status
-			log.Printf("Current slot: %d | Last vote: %d | Slots behind: %d",
+			log.Printf("Current slot: %d | Last vote: %d | Vote latency: %d",
 				result.CurrentSlot, result.LastVote, result.SlotsBehind)
 
 			// Check for delinquency

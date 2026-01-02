@@ -253,20 +253,29 @@ func main() {
 		return fmt.Sprintf("║%-78s║", content)
 	}
 
-	log.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-	log.Println("║                        Automatic Failover Manager                            ║")
-	log.Println("╠══════════════════════════════════════════════════════════════════════════════╣")
-	log.Println(tableRow("Vote Account", config.VotePubkey))
-	log.Println(tableRow("Status", config.NodeMode))
+	// Helper to log a line to both stdout and log file
+	logLine := func(line string) {
+		log.Println(line)
+		if config.LogFileHandle != nil {
+			timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
+			fmt.Fprintf(config.LogFileHandle, "%s %s\n", timestamp, line)
+		}
+	}
+
+	logLine("╔══════════════════════════════════════════════════════════════════════════════╗")
+	logLine("║                        Automatic Failover Manager                            ║")
+	logLine("╠══════════════════════════════════════════════════════════════════════════════╣")
+	logLine(tableRow("Vote Account", config.VotePubkey))
+	logLine(tableRow("Status", config.NodeMode))
 	if config.MaxVoteLatency > 0 {
-		log.Println(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
+		logLine(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
 	} else {
-		log.Println(tableRow("Latency Limit", "delinquency only (~150 slots)"))
+		logLine(tableRow("Latency Limit", "delinquency only (~150 slots)"))
 	}
 	clientVersion := fmt.Sprintf("%s %s", localResult.ClientType, localResult.Version)
-	log.Println(tableRow("Client", clientVersion))
-	log.Println(tableRow("Active Identity", localResult.Identity))
-	log.Println(tableRow("Failover Key", keypairPubkey))
+	logLine(tableRow("Client", clientVersion))
+	logLine(tableRow("Active Identity", localResult.Identity))
+	logLine(tableRow("Failover Key", keypairPubkey))
 
 	// Build checks line - split into two rows if needed
 	checksLine1 := ""
@@ -283,11 +292,12 @@ func main() {
 			checksLine2 += checkStr
 		}
 	}
-	log.Println(tableRow("Checks", strings.TrimSpace(checksLine1)))
+	logLine(tableRow("Checks", strings.TrimSpace(checksLine1)))
 	if checksLine2 != "" {
-		log.Printf("║%-78s║", "                    "+strings.TrimSpace(checksLine2))
+		checksLine2Row := fmt.Sprintf("║%-78s║", "                    "+strings.TrimSpace(checksLine2))
+		logLine(checksLine2Row)
 	}
-	log.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	logLine("╚══════════════════════════════════════════════════════════════════════════════╝")
 
 	// If any check failed, print error and exit
 	if failedCheck != nil {
@@ -402,6 +412,10 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 
 	// Print monitoring header with timestamp
 	log.Println("Starting Votelatency Monitoring every 1s:")
+	if config.LogFileHandle != nil {
+		timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
+		fmt.Fprintf(config.LogFileHandle, "%s Starting Votelatency Monitoring every 1s:\n", timestamp)
+	}
 
 	// Latency counters
 	var lowCount, mediumCount, highCount uint64

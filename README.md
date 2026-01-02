@@ -312,32 +312,53 @@ Alerts are sent on **both success and failure** of the failover process. You'll 
 --webhook-url https://hooks.slack.com/services/...
 ```
 
-The default payload is Slack-compatible:
+The default payload is Slack-compatible and includes full context:
 ```json
-{"text": "Validator failover success: vote latency exceeded threshold (50 slots)\nNew identity: DvAmv1VbS..."}
+{"text": "[STANDBY→ACTIVE] Failover SUCCESS\nReason: vote account delinquent\nVote account: DvAmv1Vb...\nPrevious identity: 5rfxa1dG...\nNew identity: HH1d1t8x..."}
 ```
 
 **Telegram** (requires custom body with chat_id):
 ```bash
 --webhook-url "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage" \
---webhook-body '{"chat_id": "YOUR_CHAT_ID", "text": "Validator failover {status}: {reason}\nNew identity: {identity}"}'
+--webhook-body '{"chat_id": "YOUR_CHAT_ID", "text": "[{transition}] Failover {status}: {reason}\nVote account: {vote_account}\nNew identity: {new_identity}"}'
 ```
 
 **Custom Webhook Body** (optional, with placeholders):
 ```bash
 --webhook-url https://api.example.com/alert \
---webhook-body '{"message": "Failover {status}: {reason}", "node": "{identity}"}'
+--webhook-body '{"message": "[{transition}] {status}: {reason}", "node": "{new_identity}"}'
 ```
 
-Supported placeholders: `{reason}`, `{identity}`, `{status}`, `{error}`
+Supported placeholders: `{transition}`, `{reason}`, `{status}`, `{error}`, `{vote_account}`, `{previous_identity}`, `{new_identity}`, `{identity}` (alias for new_identity)
 
 **Example alert messages:**
+
+✅ **STANDBY node taking over (success):**
 ```
-✅ Validator failover SUCCESS: vote latency exceeded threshold (50 slots) (now active: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA)
+[STANDBY→ACTIVE] Failover SUCCESS
+Reason: vote account delinquent
+Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
+Previous identity: 5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K
+New identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
+```
 
-❌ Validator failover FAILED: vote account is delinquent - set-identity command failed
+✅ **ACTIVE node stepping down (success):**
+```
+[ACTIVE→STANDBY] Failover SUCCESS
+Reason: vote latency exceeded 50 slots
+Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
+Previous identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
+New identity: 3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z
+```
 
-❌ Validator failover FAILED: vote latency exceeded threshold (50 slots) - identity mismatch: expected ABC..., got XYZ...
+❌ **Failed failover:**
+```
+[STANDBY→ACTIVE] Failover FAILED
+Reason: vote account delinquent
+Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
+Previous identity: 5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K
+New identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
+Error: set-identity command failed
 ```
 
 ---

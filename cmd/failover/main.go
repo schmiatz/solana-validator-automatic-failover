@@ -35,6 +35,8 @@ type Config struct {
 	PagerDutyKey     string // PagerDuty routing key for alerts
 	WebhookURL       string // Generic webhook URL
 	WebhookBody      string // Custom webhook body template
+	NodeMode         string // ACTIVE or STANDBY
+	PreviousIdentity string // Identity before failover
 }
 
 func main() {
@@ -192,6 +194,8 @@ func main() {
 
 	if voteAccountResult.NodePubkey == localResult.Identity {
 		log.Printf("Node status: ACTIVE (this node is currently validating for vote account %s)", config.VotePubkey)
+		config.NodeMode = "ACTIVE"
+		config.PreviousIdentity = localResult.Identity
 
 		// Step 5 (active): Verify that --identity-keypair is DIFFERENT from vote account's validator
 		// This ensures failover will switch away from the voting identity
@@ -201,6 +205,8 @@ func main() {
 		log.Printf("Identity keypair verified: different from voting identity")
 	} else {
 		log.Printf("Node status: STANDBY (vote account is being validated by %s)", voteAccountResult.NodePubkey)
+		config.NodeMode = "STANDBY"
+		config.PreviousIdentity = localResult.Identity
 
 		// Step 5 (standby): Verify that --identity-keypair matches the vote account's current validator
 		// This ensures we're failing over to the correct identity
@@ -485,34 +491,39 @@ func getPubkeyFromKeypair(path string) (string, error) {
 }
 
 // sendAlerts sends notifications via configured alert channels
-func sendAlerts(config *Config, reason string, identity string, success bool, errorMsg string) {
+func sendAlerts(config *Config, reason string, newIdentity string, success bool, errorMsg string) {
+	// Determine transition direction
+	var transition string
+	if config.NodeMode == "ACTIVE" {
+		transition = "ACTIVE→STANDBY"
+	} else {
+		transition = "STANDBY→ACTIVE"
+	}
+
 	if config.PagerDutyKey != "" {
-		sendPagerDutyAlert(config.PagerDutyKey, reason, identity, success, errorMsg)
+		sendPagerDutyAlert(config.PagerDutyKey, config.VotePubkey, config.PreviousIdentity, newIdentity, transition, reason, success, errorMsg)
 	}
 
 	if config.WebhookURL != "" {
-		sendWebhookAlert(config.WebhookURL, config.WebhookBody, reason, identity, success, errorMsg)
+		sendWebhookAlert(config.WebhookURL, config.WebhookBody, config.VotePubkey, config.PreviousIdentity, newIdentity, transition, reason, success, errorMsg)
 	}
 }
 
 // sendPagerDutyAlert sends an alert to PagerDuty
-func sendPagerDutyAlert(routingKey string, reason string, identity string, success bool, errorMsg string) {
+func sendPagerDutyAlert(routingKey, votePubkey, previousIdentity, newIdentity, transition, reason string, success bool, errorMsg string) {
 	log.Println("Sending PagerDuty alert...")
 
 	var summary string
 	var severity string
-	if success {
-		summary = fmt.Sprintf("Validator failover SUCCESS: %s (now active: %s)", reason, identity)
-		severity = "warning"
-	} else {
-		summary = fmt.Sprintf("Validator failover FAILED: %s - %s", reason, errorMsg)
+	status := "SUCCESS"
+	if !success {
+		status = "FAILED"
 		severity = "critical"
+	} else {
+		severity = "warning"
 	}
 
-	status := "success"
-	if !success {
-		status = "failed"
-	}
+	summary = fmt.Sprintf("[%s] Failover %s: %s", transition, status, reason)
 
 	payload := map[string]interface{}{
 		"routing_key":  routingKey,
@@ -520,12 +531,15 @@ func sendPagerDutyAlert(routingKey string, reason string, identity string, succe
 		"payload": map[string]interface{}{
 			"summary":  summary,
 			"severity": severity,
-			"source":   fmt.Sprintf("validator-%s", identity[:8]),
+			"source":   fmt.Sprintf("validator-%s", newIdentity[:8]),
 			"custom_details": map[string]string{
-				"reason":       reason,
-				"new_identity": identity,
-				"status":       status,
-				"error":        errorMsg,
+				"transition":        transition,
+				"reason":            reason,
+				"vote_account":      votePubkey,
+				"previous_identity": previousIdentity,
+				"new_identity":      newIdentity,
+				"status":            status,
+				"error":             errorMsg,
 			},
 		},
 	}
@@ -556,31 +570,37 @@ func sendPagerDutyAlert(routingKey string, reason string, identity string, succe
 }
 
 // sendWebhookAlert sends an alert to a generic webhook URL
-func sendWebhookAlert(webhookURL string, customBody string, reason string, identity string, success bool, errorMsg string) {
+func sendWebhookAlert(webhookURL, customBody, votePubkey, previousIdentity, newIdentity, transition, reason string, success bool, errorMsg string) {
 	log.Printf("Sending webhook alert to %s...", webhookURL)
 
 	var jsonData []byte
 	var err error
 
-	status := "success"
+	status := "SUCCESS"
 	if !success {
-		status = "failed"
+		status = "FAILED"
 	}
 
 	if customBody != "" {
 		// Replace placeholders in custom body
 		body := strings.ReplaceAll(customBody, "{reason}", reason)
-		body = strings.ReplaceAll(body, "{identity}", identity)
+		body = strings.ReplaceAll(body, "{identity}", newIdentity)
 		body = strings.ReplaceAll(body, "{status}", status)
 		body = strings.ReplaceAll(body, "{error}", errorMsg)
+		body = strings.ReplaceAll(body, "{transition}", transition)
+		body = strings.ReplaceAll(body, "{vote_account}", votePubkey)
+		body = strings.ReplaceAll(body, "{previous_identity}", previousIdentity)
+		body = strings.ReplaceAll(body, "{new_identity}", newIdentity)
 		jsonData = []byte(body)
 	} else {
 		// Default payload (Slack-compatible)
 		var text string
 		if success {
-			text = fmt.Sprintf("Validator failover %s: %s\nNew identity: %s", status, reason, identity)
+			text = fmt.Sprintf("[%s] Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s",
+				transition, status, reason, votePubkey, previousIdentity, newIdentity)
 		} else {
-			text = fmt.Sprintf("Validator failover %s: %s\nError: %s", status, reason, errorMsg)
+			text = fmt.Sprintf("[%s] Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s\nError: %s",
+				transition, status, reason, votePubkey, previousIdentity, newIdentity, errorMsg)
 		}
 		payload := map[string]string{
 			"text": text,

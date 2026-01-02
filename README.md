@@ -82,8 +82,8 @@ A tool to monitor Solana validator health and trigger automatic failover when is
    - If they match → **ACTIVE mode**
    - If they don't match → **STANDBY mode**
 4. **Identity keypair verification**: Different checks based on mode
-   - **ACTIVE mode**: Verify `--identity-keypair` is DIFFERENT from vote account's validator (must be unstaked)
-   - **STANDBY mode**: Verify `--identity-keypair` MATCHES the vote account's validator (must be staked)
+   - **ACTIVE mode**: Verify `--identity-keypair` is DIFFERENT from vote account's validator
+   - **STANDBY mode**: Verify `--identity-keypair` MATCHES the vote account's validator
 5. **Initial delinquency check**: Check if monitored vote account is already delinquent
    - If delinquent → retry 2x (1s apart) → trigger failover
 6. **Continuous monitoring**: Check vote account status every second
@@ -199,13 +199,13 @@ The tool performs the following checks on the **local node** to verify it's read
 
 | Mode | Required | Reason |
 |------|----------|--------|
-| **ACTIVE** | Keypair must be DIFFERENT from `nodePubkey` | Failover swaps TO an unstaked identity |
-| **STANDBY** | Keypair must MATCH `nodePubkey` | Failover swaps TO the staked identity |
+| **ACTIVE** | Keypair must be DIFFERENT from `nodePubkey` | Failover swaps away from the voting identity |
+| **STANDBY** | Keypair must MATCH `nodePubkey` | Failover swaps TO the voting identity |
 
 **ACTIVE mode success:**
 ```
 Node status: ACTIVE (this node is currently validating for vote account DvAmv...)
-Identity keypair verified: is an unstaked keypair (3ELeRTT...)
+Identity keypair verified: different from voting identity
 ```
 
 **STANDBY mode success:**
@@ -216,8 +216,8 @@ Identity keypair verified: matches vote account's validator
 
 **Error examples:**
 ```
-# ACTIVE mode - wrong keypair (staked identity provided)
-Error: Identity keypair is the staked identity. On an active node, --identity-keypair must be an unstaked keypair for failover.
+# ACTIVE mode - wrong keypair (voting identity provided)
+Error: Identity keypair is the current voting identity. On an active node, --identity-keypair must be a different keypair.
 
 # STANDBY mode - wrong keypair (doesn't match staked identity)
 Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not match the vote account's validator (HH1d1t8...)

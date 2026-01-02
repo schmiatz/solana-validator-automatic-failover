@@ -194,11 +194,11 @@ func main() {
 		log.Printf("Node status: ACTIVE (this node is currently validating for vote account %s)", config.VotePubkey)
 
 		// Step 5 (active): Verify that --identity-keypair is DIFFERENT from vote account's validator
-		// This ensures we would failover to an unstaked keypair
+		// This ensures failover will switch away from the voting identity
 		if keypairPubkey == voteAccountResult.NodePubkey {
-			log.Fatalf("Error: Identity keypair is the staked identity. On an active node, --identity-keypair must be an unstaked keypair for failover.")
+			log.Fatalf("Error: Identity keypair is the current voting identity. On an active node, --identity-keypair must be a different keypair.")
 		}
-		log.Printf("Identity keypair verified: is an unstaked keypair (%s)", keypairPubkey)
+		log.Printf("Identity keypair verified: different from voting identity")
 	} else {
 		log.Printf("Node status: STANDBY (vote account is being validated by %s)", voteAccountResult.NodePubkey)
 

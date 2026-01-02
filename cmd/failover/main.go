@@ -195,6 +195,14 @@ func main() {
 		log.Fatal("Error: Running on an active validator is not yet supported. Exiting.")
 	} else {
 		log.Printf("Node status: STANDBY (vote account is being validated by %s)", voteAccountResult.NodePubkey)
+
+		// Step 5: Verify that --identity-keypair matches the vote account's current validator
+		// This ensures we're failing over to the correct identity
+		if keypairPubkey != voteAccountResult.NodePubkey {
+			log.Fatalf("Error: Identity keypair mismatch. The provided keypair (%s) does not match the vote account's validator (%s)",
+				keypairPubkey, voteAccountResult.NodePubkey)
+		}
+		log.Printf("Identity keypair verified: matches vote account's validator")
 	}
 
 	// Step 6: Check if vote account is delinquent at startup

@@ -284,6 +284,22 @@ func main() {
 	printLine(tableRow("Active Identity", localResult.Identity))
 	printLine(tableRow("Failover Key", keypairPubkey))
 
+	// Alerting line
+	alertingValue := "Disabled"
+	if config.PagerDutyKey != "" {
+		alertingValue = "PagerDuty"
+	} else if config.WebhookURL != "" {
+		alertingValue = "Webhook"
+	}
+	printLine(tableRow("Alerting", alertingValue))
+
+	// Logfile line
+	logfileValue := "Disabled"
+	if config.LogFile != "" {
+		logfileValue = config.LogFile
+	}
+	printLine(tableRow("Logfile", logfileValue))
+
 	// Build checks line - split into two rows if needed
 	checksLine1 := ""
 	checksLine2 := ""

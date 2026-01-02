@@ -523,7 +523,12 @@ func sendPagerDutyAlert(routingKey, votePubkey, previousIdentity, newIdentity, t
 		severity = "warning"
 	}
 
-	summary = fmt.Sprintf("[%s] Failover %s: %s", transition, status, reason)
+	// Include vote pubkey in summary for visibility in Slack integration
+	if success {
+		summary = fmt.Sprintf("[%s] Failover %s for %s: %s", transition, status, votePubkey, reason)
+	} else {
+		summary = fmt.Sprintf("[%s] Failover %s for %s: %s - %s", transition, status, votePubkey, reason, errorMsg)
+	}
 
 	payload := map[string]interface{}{
 		"routing_key":  routingKey,

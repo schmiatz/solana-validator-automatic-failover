@@ -307,6 +307,11 @@ Alerts are sent on **both success and failure** of the failover process. You'll 
 --pagerduty-key YOUR_PAGERDUTY_ROUTING_KEY
 ```
 
+PagerDuty summary format (visible in Slack integration):
+```
+[STANDBY→ACTIVE] Failover SUCCESS for DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA: vote account delinquent
+```
+
 **Generic Webhook** (works with Slack, Discord, etc.):
 ```bash
 --webhook-url https://hooks.slack.com/services/...

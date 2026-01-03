@@ -38,6 +38,7 @@ type Config struct {
 	WebhookBody      string // Custom webhook body template
 	NodeMode         string // ACTIVE or STANDBY
 	PreviousIdentity string // Identity before failover
+	Hostname         string // Server hostname for alerts
 }
 
 func main() {
@@ -63,6 +64,13 @@ func main() {
 		log.Fatal("Error: --identity-keypair is required")
 	}
 
+	// Get hostname for alerts
+	hostname, err := os.Hostname()
+	if err != nil {
+		// Fallback to "unknown" if hostname cannot be determined
+		hostname = "unknown"
+	}
+
 	config := Config{
 		LocalRPCEndpoint: *rpcEndpoint,
 		LogFile:          *logFile,
@@ -75,6 +83,7 @@ func main() {
 		PagerDutyKey:     *pagerdutyKey,
 		WebhookURL:       *webhookURL,
 		WebhookBody:      *webhookBody,
+		Hostname:         hostname,
 	}
 
 	// Set up logging - always to stdout only for clean inline updates
@@ -675,12 +684,12 @@ func getPubkeyFromKeypair(path string) (string, error) {
 
 // sendAlerts sends notifications via configured alert channels
 func sendAlerts(config *Config, reason string, newIdentity string, success bool, errorMsg string) {
-	// Determine transition direction
+	// Determine transition direction (with hostname prefix)
 	var transition string
 	if config.NodeMode == "ACTIVE" {
-		transition = "ACTIVE→STANDBY"
+		transition = fmt.Sprintf("[%s ACTIVE→STANDBY]", config.Hostname)
 	} else {
-		transition = "STANDBY→ACTIVE"
+		transition = fmt.Sprintf("[%s STANDBY→ACTIVE]", config.Hostname)
 	}
 
 	if config.PagerDutyKey != "" {
@@ -707,10 +716,11 @@ func sendPagerDutyAlert(routingKey, votePubkey, previousIdentity, newIdentity, t
 	}
 
 	// Include vote pubkey in summary for visibility in Slack integration
+	// Transition already includes brackets and hostname
 	if success {
-		summary = fmt.Sprintf("[%s] Failover %s for %s: %s", transition, status, votePubkey, reason)
+		summary = fmt.Sprintf("%s Failover %s for %s: %s", transition, status, votePubkey, reason)
 	} else {
-		summary = fmt.Sprintf("[%s] Failover %s for %s: %s - %s", transition, status, votePubkey, reason, errorMsg)
+		summary = fmt.Sprintf("%s Failover %s for %s: %s - %s", transition, status, votePubkey, reason, errorMsg)
 	}
 
 	payload := map[string]interface{}{
@@ -782,12 +792,13 @@ func sendWebhookAlert(webhookURL, customBody, votePubkey, previousIdentity, newI
 		jsonData = []byte(body)
 	} else {
 		// Default payload (Slack-compatible)
+		// Transition already includes brackets and hostname
 		var text string
 		if success {
-			text = fmt.Sprintf("[%s] Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s",
+			text = fmt.Sprintf("%s Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s",
 				transition, status, reason, votePubkey, previousIdentity, newIdentity)
 		} else {
-			text = fmt.Sprintf("[%s] Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s\nError: %s",
+			text = fmt.Sprintf("%s Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s\nError: %s",
 				transition, status, reason, votePubkey, previousIdentity, newIdentity, errorMsg)
 		}
 		payload := map[string]string{

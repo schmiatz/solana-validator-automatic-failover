@@ -393,7 +393,7 @@ Alerts are sent on **both success and failure** of the failover process. You'll 
 
 PagerDuty summary format (visible in Slack integration):
 ```
-[STANDBY→ACTIVE] Failover SUCCESS for DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA: vote account delinquent
+[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS for DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA: vote account delinquent
 ```
 
 **Generic Webhook** (works with Slack, Discord, etc.):
@@ -403,7 +403,7 @@ PagerDuty summary format (visible in Slack integration):
 
 The default payload is Slack-compatible and includes full context:
 ```json
-{"text": "[STANDBY→ACTIVE] Failover SUCCESS\nReason: vote account delinquent\nVote account: DvAmv1Vb...\nPrevious identity: 5rfxa1dG...\nNew identity: HH1d1t8x..."}
+{"text": "[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS\nReason: vote account delinquent\nVote account: DvAmv1Vb...\nPrevious identity: 5rfxa1dG...\nNew identity: HH1d1t8x..."}
 ```
 
 **Telegram** (requires custom body with chat_id):
@@ -424,7 +424,7 @@ Supported placeholders: `{transition}`, `{reason}`, `{status}`, `{error}`, `{vot
 
 ✅ **STANDBY node taking over (success):**
 ```
-[STANDBY→ACTIVE] Failover SUCCESS
+[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS
 Reason: vote account delinquent
 Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
 Previous identity: 5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K
@@ -433,7 +433,7 @@ New identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
 
 ✅ **ACTIVE node stepping down (success):**
 ```
-[ACTIVE→STANDBY] Failover SUCCESS
+[validator-primary-01 ACTIVE→STANDBY] Failover SUCCESS
 Reason: vote latency exceeded 50 slots
 Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
 Previous identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
@@ -442,7 +442,7 @@ New identity: 3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z
 
 ❌ **Failed failover:**
 ```
-[STANDBY→ACTIVE] Failover FAILED
+[validator-backup-01 STANDBY→ACTIVE] Failover FAILED
 Reason: vote account delinquent
 Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
 Previous identity: 5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K

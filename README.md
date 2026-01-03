@@ -12,7 +12,7 @@
 
 ---
 
-A tool to monitor Solana validator health and trigger automatic failover when issues are detected. Designed to run on a **hot spare validator** that waits to take over if the primary fails.
+A tool to monitor Solana validator health and trigger automatic failover when issues are detected.
 
 ## Usage
 
@@ -73,7 +73,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 
 ### Overview
 
-1. **Startup**: Check if local node (hot spare) is healthy
+1. **Startup**: Check if local node is healthy
 2. **Identity check**: Verify the provided `--identity-keypair` is NOT currently active on this node
    - If keypair matches node's identity → exit (this is the primary, not a spare)
    - If keypair doesn't match → continue (node is in standby mode)

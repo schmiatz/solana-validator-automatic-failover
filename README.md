@@ -409,16 +409,24 @@ The default payload is Slack-compatible and includes full context:
 **Telegram** (requires custom body with chat_id):
 ```bash
 --webhook-url "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage" \
---webhook-body '{"chat_id": "YOUR_CHAT_ID", "text": "[{transition}] Failover {status}: {reason}\nVote account: {vote_account}\nNew identity: {new_identity}"}'
+--webhook-body '{"chat_id": "YOUR_CHAT_ID", "text": "{transition} Failover {status}: {reason}\nVote account: {vote_account}\nNew identity: {new_identity}"}'
 ```
 
 **Custom Webhook Body** (optional, with placeholders):
 ```bash
 --webhook-url https://api.example.com/alert \
---webhook-body '{"message": "[{transition}] {status}: {reason}", "node": "{new_identity}"}'
+--webhook-body '{"message": "{transition} {status}: {reason}", "node": "{new_identity}"}'
 ```
 
-Supported placeholders: `{transition}`, `{reason}`, `{status}`, `{error}`, `{vote_account}`, `{previous_identity}`, `{new_identity}`, `{identity}` (alias for new_identity)
+Supported placeholders:
+- `{transition}` - Transition direction with hostname (e.g., `[validator-backup-01 STANDBY→ACTIVE]`)
+- `{reason}` - Failover reason
+- `{status}` - `SUCCESS` or `FAILED`
+- `{error}` - Error message (if failed)
+- `{vote_account}` - Vote account public key
+- `{previous_identity}` - Identity before failover
+- `{new_identity}` - Identity after failover
+- `{identity}` - Alias for `{new_identity}`
 
 **Example alert messages:**
 

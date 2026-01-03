@@ -73,20 +73,19 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 
 ### Overview
 
+The client can run on both **active** and **standby** validator nodes, automatically detecting which mode it's in and adjusting its behavior accordingly.
+
 1. **Startup**: Check if local node is healthy
-2. **Identity check**: Verify the provided `--identity-keypair` is NOT currently active on this node
-   - If keypair matches node's identity → exit (this is the primary, not a spare)
-   - If keypair doesn't match → continue (node is in standby mode)
-3. **Active/Standby detection**: Check if this node is the active validator for the vote account
+2. **Active/Standby detection**: Check if this node is the active validator for the vote account
    - Compares local node identity with vote account's `nodePubkey`
-   - If they match → **ACTIVE mode**
-   - If they don't match → **STANDBY mode**
-4. **Identity keypair verification**: Different checks based on mode
-   - **ACTIVE mode**: Verify `--identity-keypair` is DIFFERENT from vote account's validator
-   - **STANDBY mode**: Verify `--identity-keypair` MATCHES the vote account's validator
-5. **Initial delinquency check**: Check if monitored vote account is already delinquent
+   - If they match → **ACTIVE mode** (this node is currently validating)
+   - If they don't match → **STANDBY mode** (this node is a hot spare)
+3. **Identity keypair verification**: Different checks based on detected mode
+   - **ACTIVE mode**: Verify `--identity-keypair` is DIFFERENT from vote account's validator (unstaked keypair for failover)
+   - **STANDBY mode**: Verify `--identity-keypair` MATCHES the vote account's validator (staked keypair to take over)
+4. **Initial delinquency check**: Check if monitored vote account is already delinquent
    - If delinquent → retry 2x (1s apart) → trigger failover
-6. **Continuous monitoring**: Check vote account status every second
+5. **Continuous monitoring**: Check vote account status every second
    - Always monitors for delinquency
    - If `--max-vote-latency` is set, also triggers failover when latency exceeds threshold
    - Any issue detected → retry 2x (1s apart) → trigger failover

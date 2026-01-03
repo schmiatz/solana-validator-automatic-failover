@@ -92,7 +92,7 @@ The client can run on both **active** and **standby** validator nodes, automatic
 
 ### Why use `--max-vote-latency`?
 
-A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency 50`, the failover triggers long before delinquency would occur — giving you faster response to issues.
+A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency X`, the failover can trigger before delinquency would occur — avoiding a downtime at all.
 
 ---
 

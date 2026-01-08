@@ -484,3 +484,8 @@ automatic-failover/
 │   └── health/checker.go     # Health checking logic
 └── bin/failover              # Compiled binary
 ```
+
+## ToDos
+- add parameter for specific unstaked and staked identitiy to make the client being able to always run, even after a set identity
+- pre hooks and post hooks
+- conquer the world

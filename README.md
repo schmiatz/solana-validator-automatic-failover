@@ -17,7 +17,7 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 ## Usage
 
 ```bash
-./bin/failover --votepubkey <VOTE_PUBKEY> --identity-keypair <PATH> [options]
+./bin/failover --votepubkey <VOTE_PUBKEY> --identity-keypair --config/--ledger <PATH> [options]
 ```
 
 ### Parameters

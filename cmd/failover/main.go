@@ -39,6 +39,7 @@ type Config struct {
 	NodeMode         string // ACTIVE or STANDBY
 	PreviousIdentity string // Identity before failover
 	Hostname         string // Server hostname for alerts
+	IsTTY            bool   // Whether stdout is a terminal
 }
 
 func main() {
@@ -71,6 +72,13 @@ func main() {
 		hostname = "unknown"
 	}
 
+	// Detect if stdout is a TTY (terminal)
+	isTTY := false
+	if fileInfo, err := os.Stdout.Stat(); err == nil {
+		// Check if stdout is a character device (terminal)
+		isTTY = (fileInfo.Mode() & os.ModeCharDevice) != 0
+	}
+
 	config := Config{
 		LocalRPCEndpoint: *rpcEndpoint,
 		LogFile:          *logFile,
@@ -84,6 +92,7 @@ func main() {
 		WebhookURL:       *webhookURL,
 		WebhookBody:      *webhookBody,
 		Hostname:         hostname,
+		IsTTY:            isTTY,
 	}
 
 	// Set up logging - always to stdout only for clean inline updates
@@ -460,6 +469,21 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		}
 	}
 
+	// Helper to write detailed log (for non-TTY mode, outputs to stdout)
+	writeDetailedLog := func(format string, args ...interface{}) {
+		timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
+		message := fmt.Sprintf(format, args...)
+		if config.IsTTY {
+			// TTY mode: only write to log file if specified
+			logToFile(format, args...)
+		} else {
+			// Non-TTY mode: write to stdout (for journalctl)
+			fmt.Printf("%s %s\n", timestamp, message)
+			// Also write to log file if specified
+			logToFile(format, args...)
+		}
+	}
+
 	// Helper to get latency category
 	getCategory := func(latency int64) string {
 		if latency <= 2 {
@@ -470,11 +494,13 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		return "High"
 	}
 
-	// Print initial box frame for inline update area (no indentation)
-	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                                                                              ║")
-	fmt.Println("║                                                                              ║")
-	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	// Print initial box frame for inline update area (only in TTY mode)
+	if config.IsTTY {
+		fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+		fmt.Println("║                                                                              ║")
+		fmt.Println("║                                                                              ║")
+		fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	}
 
 	for {
 		select {
@@ -502,26 +528,33 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				highCount++
 			}
 
-			// Build the two content lines (78 chars inside borders to match 80-char box)
-			countsContent := fmt.Sprintf("  Counts   Low[≤2]: %-6d │   Medium[3-10]: %-6d │   High[11+]: %-5d",
-				lowCount, mediumCount, highCount)
-			statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
-				result.CurrentSlot, result.LastVote, latency)
-			countsLine := fmt.Sprintf("║%-78s║", countsContent)
-			statusLine := fmt.Sprintf("║%-78s║", statusContent)
+			if config.IsTTY {
+				// TTY mode: Use inline box updates with ANSI codes
+				// Build the two content lines (78 chars inside borders to match 80-char box)
+				countsContent := fmt.Sprintf("  Counts   Low[≤2]: %-6d │   Medium[3-10]: %-6d │   High[11+]: %-5d",
+					lowCount, mediumCount, highCount)
+				statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
+					result.CurrentSlot, result.LastVote, latency)
+				countsLine := fmt.Sprintf("║%-78s║", countsContent)
+				statusLine := fmt.Sprintf("║%-78s║", statusContent)
 
-			// Move up 3 lines (to the first content line inside the box) and update
-			fmt.Print("\033[3A")    // Move up 3 lines
-			fmt.Print("\033[K")     // Clear line
-			fmt.Println(countsLine) // Print counts
-			fmt.Print("\033[K")     // Clear line
-			fmt.Println(statusLine) // Print status
-			fmt.Print("\033[K")     // Clear line
-			fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				// Move up 3 lines (to the first content line inside the box) and update
+				fmt.Print("\033[3A")    // Move up 3 lines
+				fmt.Print("\033[K")     // Clear line
+				fmt.Println(countsLine) // Print counts
+				fmt.Print("\033[K")     // Clear line
+				fmt.Println(statusLine) // Print status
+				fmt.Print("\033[K")     // Clear line
+				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
-			// Write detailed log to file with category
-			logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
-				result.CurrentSlot, result.LastVote, category, latency)
+				// Write detailed log to file with category (if log file specified)
+				logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
+					result.CurrentSlot, result.LastVote, category, latency)
+			} else {
+				// Non-TTY mode: Output detailed logs to stdout (for journalctl)
+				writeDetailedLog("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
+					result.CurrentSlot, result.LastVote, category, latency)
+			}
 
 			// Check for delinquency
 			if result.Delinquent {
@@ -536,11 +569,13 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				}
 				log.Println("Delinquency recovered, continuing monitoring...")
 				logToFile("Delinquency recovered, continuing monitoring...")
-				// Reprint box frame
-				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				// Reprint box frame (only in TTY mode)
+				if config.IsTTY {
+					fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+					fmt.Println("║                                                                              ║")
+					fmt.Println("║                                                                              ║")
+					fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				}
 				continue
 			}
 
@@ -557,11 +592,13 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				}
 				log.Println("Latency recovered, continuing monitoring...")
 				logToFile("Latency recovered, continuing monitoring...")
-				// Reprint box frame
-				fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("║                                                                              ║")
-				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				// Reprint box frame (only in TTY mode)
+				if config.IsTTY {
+					fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+					fmt.Println("║                                                                              ║")
+					fmt.Println("║                                                                              ║")
+					fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+				}
 			}
 		}
 	}

@@ -1,0 +1,89 @@
+# Solana Automatic Failover - Example Configuration
+#
+# CLI flags override TOML values.
+
+# Required. Vote account public key to monitor.
+vote-pubkey = "YourVoteAccountPubkeyHere1111111111111111111111"
+
+# Optional. Local RPC endpoint. Default: http://127.0.0.1:8899
+rpc = "http://127.0.0.1:8899"
+
+# Optional. Max slots behind before triggering failover. Default: 0 (only trigger on delinquency)
+max-vote-latency = 0
+
+# Optional. Number of consecutive checks before confirming failover. Default: 3
+retry-count = 3
+
+# Required. Path to staked identity keypair JSON file (the key this node will assume on failover).
+identity-keypair = "/home/sol/staked-identity.json"
+
+# Required for Agave. Path to validator ledger directory.
+ledger = "/home/sol/ledger"
+
+# Required for Frankendancer. Path to fdctl config.toml (use this instead of ledger for Firedancer).
+# fdctl-config = "/home/sol/fdctl-config.toml"
+
+# --- SSH Fencing (STONITH) ---
+# Without these, failover only proceeds when the active node's TPU port is unreachable.
+
+# Optional. SSH target for the active node (user@host). Default: auto-detected from gossip.
+# remote-ssh = "sol@10.0.0.1"
+
+# Optional. SSH private key path. Default: system default SSH key.
+# ssh-key = "/home/sol/.ssh/id_ed25519"
+
+# Optional. SSH port. Default: 22
+ssh-port = 22
+
+# Optional (required for fencing). Path to the unstaked identity keypair on the active node.
+# The active node will be switched to this key during fencing.
+remote-identity-keypair = "/home/sol/unstaked-identity.json"
+
+# Optional (required for Agave fencing). Ledger path on the active node (for remote set-identity + tower file copy).
+remote-ledger = "/home/sol/ledger"
+
+# Optional (required for Frankendancer fencing). fdctl config path on the active node.
+# remote-fdctl-config = "/home/sol/fdctl-config.toml"
+
+# Optional. SSH connection timeout in seconds. Default: 5
+ssh-timeout = 5
+
+# Optional. SSH retry count when active node is alive but SSH fails. Default: 2
+ssh-retries = 2
+
+# --- Hooks ---
+# Bash commands executed via "bash -l -c" (login shell, sources .profile).
+# Environment variables available in hooks:
+#   FAILOVER_REASON          - why failover was triggered (e.g. "vote account is delinquent")
+#   FAILOVER_VOTE_PUBKEY     - the vote account public key
+#   FAILOVER_ACTIVE_NODE     - identity pubkey of the active node
+#   FAILOVER_ACTIVE_IP       - IP address of the active node
+#   FAILOVER_LOCAL_IDENTITY  - current local identity (before failover)
+#   FAILOVER_NEW_IDENTITY    - the staked identity being assumed
+#   FAILOVER_HOSTNAME        - hostname of this machine
+
+# Optional. Pre-failover hook: runs before fencing. Non-zero exit ABORTS the failover.
+# Use for: custom safety checks, draining connections, notifying team before action.
+pre-failover-hook = "echo 'Pre-failover: reason=$FAILOVER_REASON active=$FAILOVER_ACTIVE_NODE'"
+
+# Optional. Post-failover hook: runs after successful identity switch. Best-effort (failures are logged).
+# Use for: updating DNS, restarting services, custom notifications.
+post-failover-hook = "echo 'Post-failover: now running as $FAILOVER_NEW_IDENTITY'"
+
+# --- Alerting ---
+
+# Optional. PagerDuty Events API v2 routing key.
+# pagerduty-key = "your-pagerduty-routing-key"
+
+# Optional. Generic webhook URL (receives JSON POST on failover).
+# webhook-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
+
+# Optional. Custom webhook body template (supports placeholders):
+#   {reason}, {identity}, {status}, {error}, {transition},
+#   {vote_account}, {previous_identity}, {new_identity}
+# webhook-body = '{"text":"{transition} Failover {status}: {reason}"}'
+
+# --- Logging ---
+
+# Optional. Log file path (logs to both stdout and file if set).
+# log = "/var/log/failover.log"

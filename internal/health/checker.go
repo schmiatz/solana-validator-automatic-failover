@@ -154,12 +154,13 @@ func (c *Checker) probeGossipPort(address string) bool {
 
 // LocalCheckResult contains the result of a local node health check
 type LocalCheckResult struct {
-	Identity   string
-	ClientType string
-	Version    string
-	Healthy    bool
-	Gossip     *GossipInfo
-	Error      error
+	Identity     string
+	ClientType   string
+	Version      string
+	Healthy      bool
+	Gossip       *GossipInfo
+	ClusterNodes []rpc.ClusterNode
+	Error        error
 }
 
 // CheckLocal performs a health check on the local node (hot spare)
@@ -185,6 +186,7 @@ func (c *Checker) CheckLocal() (*LocalCheckResult, error) {
 	result.Identity = nodeInfo.Identity
 	result.ClientType = nodeInfo.ClientType
 	result.Version = nodeInfo.Version
+	result.ClusterNodes = nodeInfo.ClusterNodes
 
 	// Check gossip status using cluster nodes from batch response
 	result.Gossip = c.checkGossipStatusFromNodes(nodeInfo.Identity, nodeInfo.ClusterNodes)

@@ -484,7 +484,21 @@ func main() {
 			if err != nil {
 				sshErrMsg = fmt.Sprintf("'%s' not found in PATH on remote node %s", remoteCmd, config.RemoteSSH)
 			} else {
-				sshPassed = true
+				// Verify remote-identity-keypair is NOT the active voting identity
+				// Read the keypair file on the remote node and extract the pubkey
+				catOutput, err := sshExec(&config, "cat "+config.RemoteIdentityKeypair)
+				if err != nil {
+					sshErrMsg = fmt.Sprintf("Cannot read remote-identity-keypair %s on %s: %v", config.RemoteIdentityKeypair, config.RemoteSSH, err)
+				} else {
+					remotePubkey, err := pubkeyFromJSON([]byte(catOutput))
+					if err != nil {
+						sshErrMsg = fmt.Sprintf("Cannot parse remote-identity-keypair %s: %v", config.RemoteIdentityKeypair, err)
+					} else if remotePubkey == voteAccountResult.NodePubkey {
+						sshErrMsg = fmt.Sprintf("remote-identity-keypair (%s) is the ACTIVE voting identity — fencing would be a no-op (must be an unstaked key)", remotePubkey)
+					} else {
+						sshPassed = true
+					}
+				}
 			}
 		}
 		sshCheck := checkResult{name: "SSH", passed: sshPassed, errMsg: sshErrMsg}
@@ -1187,7 +1201,10 @@ func getPubkeyFromKeypair(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read keypair file: %w", err)
 	}
+	return pubkeyFromJSON(data)
+}
 
+func pubkeyFromJSON(data []byte) (string, error) {
 	var keypair []byte
 	if err := json.Unmarshal(data, &keypair); err != nil {
 		return "", fmt.Errorf("failed to parse keypair JSON: %w", err)

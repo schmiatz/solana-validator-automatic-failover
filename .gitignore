@@ -10,7 +10,6 @@ bin/
 
 # Test binary
 *.test
-failover
 
 # Output of go coverage tool
 *.out

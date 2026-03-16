@@ -430,15 +430,19 @@ func main() {
 		for _, node := range localResult.ClusterNodes {
 			if node.Pubkey == voteAccountResult.NodePubkey {
 				activePassed = true
-				if node.TPU != nil {
-					config.ActiveNodeTPU = *node.TPU
-					host, _, err := net.SplitHostPort(*node.TPU)
+				tpuAddr := node.TPU
+				if tpuAddr == nil {
+					tpuAddr = node.TpuQuic // fallback for nodes that only advertise QUIC TPU
+				}
+				if tpuAddr != nil {
+					config.ActiveNodeTPU = *tpuAddr
+					host, _, err := net.SplitHostPort(*tpuAddr)
 					if err == nil {
 						config.ActiveNodeIP = host
 					}
 				} else {
 					activePassed = false
-					activeErrMsg = "Active node found in gossip but has no TPU address"
+					activeErrMsg = "Active node found in gossip but has no TPU address (neither tpu nor tpuQuic advertised)"
 				}
 				break
 			}

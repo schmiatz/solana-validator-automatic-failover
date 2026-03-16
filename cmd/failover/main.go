@@ -8,94 +8,259 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	osuser "os/user"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/mr-tron/base58"
 	"github.com/schmiatz/solana-validator-automatic-failover/internal/health"
 	"github.com/schmiatz/solana-validator-automatic-failover/internal/rpc"
 )
 
-// Config holds the application configuration
+// TOMLConfig maps the TOML configuration file fields.
+// Field names match Config struct so applyTOMLConfig can map them directly.
+type TOMLConfig struct {
+	VotePubkey            string `toml:"vote-pubkey"`
+	RPC                   string `toml:"rpc"`
+	MaxVoteLatency        int64  `toml:"max-vote-latency"`
+	RetryCount            int    `toml:"retry-count"`
+	IdentityKeypair       string `toml:"identity-keypair"`
+	LedgerPath            string `toml:"ledger"`
+	FdctlConfigPath       string `toml:"fdctl-config"`
+	RemoteSSH             string `toml:"remote-ssh"`
+	SSHKey                string `toml:"ssh-key"`
+	SSHPort               int    `toml:"ssh-port"`
+	RemoteIdentityKeypair string `toml:"remote-identity-keypair"`
+	RemoteLedgerPath      string `toml:"remote-ledger"`
+	RemoteFdctlConfig     string `toml:"remote-fdctl-config"`
+	SSHTimeout            int    `toml:"ssh-timeout"`
+	SSHRetries            int    `toml:"ssh-retries"`
+	PreFailoverHook       string `toml:"pre-failover-hook"`
+	PostFailoverHook      string `toml:"post-failover-hook"`
+	PagerDutyKey          string `toml:"pagerduty-key"`
+	WebhookURL            string `toml:"webhook-url"`
+	WebhookBody           string `toml:"webhook-body"`
+	LogFile               string `toml:"log"`
+}
+
+// applyTOMLConfig sets Config fields from TOML values (only non-zero values)
+func applyTOMLConfig(config *Config, t *TOMLConfig) {
+	setStr := func(dst *string, src string) {
+		if src != "" {
+			*dst = src
+		}
+	}
+	setInt := func(dst *int, src int) {
+		if src != 0 {
+			*dst = src
+		}
+	}
+	setInt64 := func(dst *int64, src int64) {
+		if src != 0 {
+			*dst = src
+		}
+	}
+	setStr(&config.VotePubkey, t.VotePubkey)
+	setStr(&config.LocalRPCEndpoint, t.RPC)
+	setInt64(&config.MaxVoteLatency, t.MaxVoteLatency)
+	setInt(&config.RetryCount, t.RetryCount)
+	setStr(&config.IdentityKeypair, t.IdentityKeypair)
+	setStr(&config.LedgerPath, t.LedgerPath)
+	setStr(&config.FdctlConfigPath, t.FdctlConfigPath)
+	setStr(&config.RemoteSSH, t.RemoteSSH)
+	setStr(&config.SSHKey, t.SSHKey)
+	setInt(&config.SSHPort, t.SSHPort)
+	setStr(&config.RemoteIdentityKeypair, t.RemoteIdentityKeypair)
+	setStr(&config.RemoteLedgerPath, t.RemoteLedgerPath)
+	setStr(&config.RemoteFdctlConfig, t.RemoteFdctlConfig)
+	setInt(&config.SSHTimeout, t.SSHTimeout)
+	setInt(&config.SSHRetries, t.SSHRetries)
+	setStr(&config.PreFailoverHook, t.PreFailoverHook)
+	setStr(&config.PostFailoverHook, t.PostFailoverHook)
+	setStr(&config.PagerDutyKey, t.PagerDutyKey)
+	setStr(&config.WebhookURL, t.WebhookURL)
+	setStr(&config.WebhookBody, t.WebhookBody)
+	setStr(&config.LogFile, t.LogFile)
+}
+
+// Config holds the runtime configuration
 type Config struct {
-	LocalRPCEndpoint string
-	LogFile          string
-	LogFileHandle    *os.File // Handle to log file for direct writes
-	VotePubkey       string
-	MaxVoteLatency   int64
-	RetryCount       int
-	IdentityKeypair  string
-	ConfigPath       string // For Frankendancer
-	LedgerPath       string // For Agave
-	ClientType       string // Detected client type (Agave/Frankendancer)
-	PagerDutyKey     string // PagerDuty routing key for alerts
-	WebhookURL       string // Generic webhook URL
-	WebhookBody      string // Custom webhook body template
-	NodeMode         string // ACTIVE or STANDBY
-	PreviousIdentity string // Identity before failover
-	Hostname         string // Server hostname for alerts
-	IsTTY            bool   // Whether stdout is a terminal
+	LocalRPCEndpoint      string
+	LogFile               string
+	LogFileHandle         *os.File
+	VotePubkey            string
+	MaxVoteLatency        int64
+	RetryCount            int
+	IdentityKeypair       string
+	FdctlConfigPath       string // For Frankendancer (local)
+	LedgerPath            string // For Agave (local)
+	ClientType            string // Detected client type (Agave/Frankendancer)
+	RemoteSSH             string // user@host for SSH to active node
+	SSHKey                string // SSH private key path
+	SSHPort               int    // SSH port
+	RemoteIdentityKeypair string // Path to unstaked keypair on active node
+	RemoteLedgerPath      string // Ledger path on active node
+	RemoteFdctlConfig     string // Fdctl config path on active node
+	SSHTimeout            int    // SSH connection timeout in seconds
+	SSHRetries            int    // SSH retry count when active node is alive
+	FencingConfigured     bool   // Whether SSH fencing is fully configured
+	ActiveNodeTPU         string // TPU address of active node (IP:port)
+	ActiveNodeIP          string // IP of active node
+	ActiveNodePubkey      string // Identity pubkey of active node
+	PreFailoverHook       string // Bash command to run before failover (non-zero exit aborts)
+	PostFailoverHook      string // Bash command to run after successful failover (best-effort)
+	PagerDutyKey          string
+	WebhookURL            string
+	WebhookBody           string
+	PreviousIdentity      string // Local identity before failover
+	Hostname              string
+	IsTTY                 bool
 }
 
 func main() {
-	// Parse command line flags
-	rpcEndpoint := flag.String("rpc", "http://127.0.0.1:8899", "Local RPC endpoint to query")
+	// Define CLI flags
+	configFile := flag.String("config", "", "Path to TOML configuration file")
+	rpcEndpoint := flag.String("rpc", "", "Local RPC endpoint to query (default: http://127.0.0.1:8899)")
 	logFile := flag.String("log", "", "Path to log file (logs to stdout and file if set)")
-	votePubkey := flag.String("votepubkey", "", "Vote account public key to monitor (required)")
-	maxVoteLatency := flag.Int64("max-vote-latency", 0, "Max slots behind before triggering failover (0 = disabled)")
-	retryCount := flag.Int("retry-count", 3, "Number of retries before triggering failover")
-	identityKeypair := flag.String("identity-keypair", "", "Path to identity keypair JSON file (required)")
-	configPath := flag.String("config", "", "Path to config.toml (required for Frankendancer)")
-	ledgerPath := flag.String("ledger", "", "Path to validator ledger directory (required for Agave)")
+	votePubkey := flag.String("votepubkey", "", "Vote account public key to monitor")
+	maxVoteLatency := flag.Int64("max-vote-latency", 0, "Max slots behind before triggering failover (0=disabled)")
+	retryCount := flag.Int("retry-count", 0, "Number of retries before triggering failover (default: 3)")
+	identityKeypair := flag.String("identity-keypair", "", "Path to staked identity keypair JSON file")
+	fdctlConfigPath := flag.String("fdctl-config", "", "Path to fdctl config.toml (Frankendancer)")
+	ledgerPath := flag.String("ledger", "", "Path to validator ledger directory (Agave)")
+	remoteSSH := flag.String("remote-ssh", "", "SSH target for active node (user@host)")
+	sshKey := flag.String("ssh-key", "", "Path to SSH private key")
+	sshPort := flag.Int("ssh-port", 0, "SSH port for active node (default: 22)")
+	remoteIdentityKeypair := flag.String("remote-identity-keypair", "", "Path to unstaked keypair on active node")
+	remoteLedgerPath := flag.String("remote-ledger", "", "Ledger path on active node (Agave)")
+	remoteFdctlConfig := flag.String("remote-fdctl-config", "", "fdctl config path on active node (Frankendancer)")
+	sshTimeout := flag.Int("ssh-timeout", 0, "SSH connection timeout in seconds (default: 5)")
+	sshRetries := flag.Int("ssh-retries", 0, "SSH retry count when active node is alive (default: 2)")
+	preFailoverHook := flag.String("pre-failover-hook", "", "Bash command to run before failover (non-zero exit aborts failover)")
+	postFailoverHook := flag.String("post-failover-hook", "", "Bash command to run after successful failover (best-effort)")
 	pagerdutyKey := flag.String("pagerduty-key", "", "PagerDuty routing key for alerts on failover")
 	webhookURL := flag.String("webhook-url", "", "Generic webhook URL to POST on failover")
 	webhookBody := flag.String("webhook-body", "", "Custom webhook body (supports {reason}, {identity} placeholders)")
 	flag.Parse()
 
+	// Track which flags were explicitly set on command line
+	flagsSet := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { flagsSet[f.Name] = true })
+
+	// Start with defaults
+	config := Config{
+		LocalRPCEndpoint: "http://127.0.0.1:8899",
+		RetryCount:       3,
+		SSHPort:          22,
+		SSHTimeout:       5,
+		SSHRetries:       2,
+	}
+
+	// Load TOML config if provided
+	if *configFile != "" {
+		var tomlCfg TOMLConfig
+		if _, err := toml.DecodeFile(*configFile, &tomlCfg); err != nil {
+			log.Fatalf("Error reading config file %s: %v", *configFile, err)
+		}
+		applyTOMLConfig(&config, &tomlCfg)
+	}
+
+	// CLI flags override TOML values (only if explicitly set)
+	if flagsSet["rpc"] {
+		config.LocalRPCEndpoint = *rpcEndpoint
+	}
+	if flagsSet["log"] {
+		config.LogFile = *logFile
+	}
+	if flagsSet["votepubkey"] {
+		config.VotePubkey = *votePubkey
+	}
+	if flagsSet["max-vote-latency"] {
+		config.MaxVoteLatency = *maxVoteLatency
+	}
+	if flagsSet["retry-count"] {
+		config.RetryCount = *retryCount
+	}
+	if flagsSet["identity-keypair"] {
+		config.IdentityKeypair = *identityKeypair
+	}
+	if flagsSet["fdctl-config"] {
+		config.FdctlConfigPath = *fdctlConfigPath
+	}
+	if flagsSet["ledger"] {
+		config.LedgerPath = *ledgerPath
+	}
+	if flagsSet["remote-ssh"] {
+		config.RemoteSSH = *remoteSSH
+	}
+	if flagsSet["ssh-key"] {
+		config.SSHKey = *sshKey
+	}
+	if flagsSet["ssh-port"] {
+		config.SSHPort = *sshPort
+	}
+	if flagsSet["remote-identity-keypair"] {
+		config.RemoteIdentityKeypair = *remoteIdentityKeypair
+	}
+	if flagsSet["remote-ledger"] {
+		config.RemoteLedgerPath = *remoteLedgerPath
+	}
+	if flagsSet["remote-fdctl-config"] {
+		config.RemoteFdctlConfig = *remoteFdctlConfig
+	}
+	if flagsSet["ssh-timeout"] {
+		config.SSHTimeout = *sshTimeout
+	}
+	if flagsSet["ssh-retries"] {
+		config.SSHRetries = *sshRetries
+	}
+	if flagsSet["pre-failover-hook"] {
+		config.PreFailoverHook = *preFailoverHook
+	}
+	if flagsSet["post-failover-hook"] {
+		config.PostFailoverHook = *postFailoverHook
+	}
+	if flagsSet["pagerduty-key"] {
+		config.PagerDutyKey = *pagerdutyKey
+	}
+	if flagsSet["webhook-url"] {
+		config.WebhookURL = *webhookURL
+	}
+	if flagsSet["webhook-body"] {
+		config.WebhookBody = *webhookBody
+	}
+
 	// Validate required parameters
-	if *votePubkey == "" {
+	if config.VotePubkey == "" {
 		log.Fatal("Error: --votepubkey is required")
 	}
-	if *identityKeypair == "" {
+	if config.IdentityKeypair == "" {
 		log.Fatal("Error: --identity-keypair is required")
 	}
 
 	// Get hostname for alerts
 	hostname, err := os.Hostname()
 	if err != nil {
-		// Fallback to "unknown" if hostname cannot be determined
 		hostname = "unknown"
 	}
+	config.Hostname = hostname
 
 	// Detect if stdout is a TTY (terminal)
 	isTTY := false
 	if fileInfo, err := os.Stdout.Stat(); err == nil {
-		// Check if stdout is a character device (terminal)
 		isTTY = (fileInfo.Mode() & os.ModeCharDevice) != 0
 	}
+	config.IsTTY = isTTY
 
-	config := Config{
-		LocalRPCEndpoint: *rpcEndpoint,
-		LogFile:          *logFile,
-		VotePubkey:       *votePubkey,
-		MaxVoteLatency:   *maxVoteLatency,
-		RetryCount:       *retryCount,
-		IdentityKeypair:  *identityKeypair,
-		ConfigPath:       *configPath,
-		LedgerPath:       *ledgerPath,
-		PagerDutyKey:     *pagerdutyKey,
-		WebhookURL:       *webhookURL,
-		WebhookBody:      *webhookBody,
-		Hostname:         hostname,
-		IsTTY:            isTTY,
-	}
-
-	// Set up logging - always to stdout only for clean inline updates
+	// Set up logging
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	// If log file is specified, open it for direct writes
@@ -151,12 +316,12 @@ func main() {
 	// Health check
 	healthCheck := checkResult{name: "Health", passed: localResult.Healthy}
 	if !localResult.Healthy {
-		healthCheck.errMsg = "Node is not healthy"
+		healthCheck.errMsg = fmt.Sprintf("Node at %s is not healthy", config.LocalRPCEndpoint)
 		failedCheck = &healthCheck
 	}
 	checks = append(checks, healthCheck)
 
-	// Gossip check
+	// Gossip check (local node)
 	gossipPassed := localResult.Gossip != nil && localResult.Gossip.InGossip && localResult.Gossip.TCPReachable
 	gossipCheck := checkResult{name: "Gossip", passed: gossipPassed}
 	if !gossipPassed {
@@ -179,16 +344,16 @@ func main() {
 	}
 	checks = append(checks, pathCheck)
 
-	// Client-specific parameter check (Config for Frankendancer, Ledger for Agave)
+	// Client-specific parameter check (local path)
 	paramPassed := true
 	paramErrMsg := ""
-	paramName := "Config" // Default
+	paramName := "Config"
 	switch config.ClientType {
 	case "Frankendancer":
 		paramName = "Config"
-		if config.ConfigPath == "" {
+		if config.FdctlConfigPath == "" {
 			paramPassed = false
-			paramErrMsg = "--config is required for Frankendancer nodes"
+			paramErrMsg = "--fdctl-config is required for Frankendancer nodes"
 		}
 	case "Agave":
 		paramName = "Ledger"
@@ -203,10 +368,10 @@ func main() {
 	}
 	checks = append(checks, paramCheck)
 
-	// Keypair check - read and validate
+	// Keypair check - read and validate against vote account
 	keypairPubkey, err := getPubkeyFromKeypair(config.IdentityKeypair)
 	keypairReadable := err == nil
-	keypairCheck := checkResult{name: "Keypair", passed: keypairReadable}
+	keypairCheck := checkResult{name: "Keypair", passed: false}
 	if !keypairReadable {
 		keypairCheck.errMsg = fmt.Sprintf("Cannot read identity keypair: %v", err)
 		if failedCheck == nil {
@@ -215,63 +380,144 @@ func main() {
 	}
 	checks = append(checks, keypairCheck)
 
-	// Identity check - keypair must not be currently active on this node
-	identityPassed := keypairReadable && keypairPubkey != localResult.Identity
-	identityCheck := checkResult{name: "Identity", passed: identityPassed}
-	if keypairReadable && keypairPubkey == localResult.Identity {
-		identityCheck.errMsg = "Provided keypair is already active on this node"
-		if failedCheck == nil {
-			failedCheck = &identityCheck
-		}
-	}
-	checks = append(checks, identityCheck)
-
-	// Voting check - determine ACTIVE/STANDBY mode
+	// Vote account check
 	voteAccountResult, voteErr := checker.Check(config.VotePubkey)
 	votePassed := voteErr == nil
-	voteCheck := checkResult{name: "Voting", passed: votePassed}
+	voteCheck := checkResult{name: "Vote", passed: votePassed}
 	if voteErr != nil {
 		voteCheck.errMsg = fmt.Sprintf("Cannot check vote account: %v", voteErr)
 		if failedCheck == nil {
 			failedCheck = &voteCheck
 		}
+	} else if keypairReadable {
+		// Validate keypair matches vote account's staked identity
+		if keypairPubkey != voteAccountResult.NodePubkey {
+			voteCheck.passed = false
+			voteCheck.errMsg = fmt.Sprintf("Keypair pubkey (%s) does not match vote account identity (%s)",
+				keypairPubkey, voteAccountResult.NodePubkey)
+			if failedCheck == nil {
+				failedCheck = &voteCheck
+			}
+		} else {
+			keypairCheck.passed = true // Keypair is valid and matches
+		}
 	}
+	// Update the checks slice with final keypair status
+	checks[4] = keypairCheck
 	checks = append(checks, voteCheck)
 
-	// Determine node mode and set config
-	modePassed := true
-	modeErrMsg := ""
-	if votePassed {
-		if voteAccountResult.NodePubkey == localResult.Identity {
-			config.NodeMode = "ACTIVE"
-		} else {
-			config.NodeMode = "STANDBY"
+	// Standby check - local node must NOT be running the staked identity
+	standbyPassed := true
+	standbyErrMsg := ""
+	if votePassed && keypairReadable {
+		if localResult.Identity == voteAccountResult.NodePubkey {
+			standbyPassed = false
+			standbyErrMsg = "Local node is running the staked identity - this tool must run on the STANDBY node"
 		}
 		config.PreviousIdentity = localResult.Identity
+		config.ActiveNodePubkey = voteAccountResult.NodePubkey
+	}
+	standbyCheck := checkResult{name: "Standby", passed: standbyPassed, errMsg: standbyErrMsg}
+	if !standbyPassed && failedCheck == nil {
+		failedCheck = &standbyCheck
+	}
+	checks = append(checks, standbyCheck)
 
-		// Mode-specific keypair validation
-		if config.NodeMode == "ACTIVE" && keypairReadable && keypairPubkey == voteAccountResult.NodePubkey {
-			modePassed = false
-			modeErrMsg = "On ACTIVE node, --identity-keypair must be different from voting identity"
-		} else if config.NodeMode == "STANDBY" && keypairReadable && keypairPubkey != voteAccountResult.NodePubkey {
-			modePassed = false
-			modeErrMsg = fmt.Sprintf("On STANDBY node, --identity-keypair must match voting identity (%s)", voteAccountResult.NodePubkey)
+	// Active node check - find active node in gossip, save TPU address
+	activePassed := false
+	activeErrMsg := "Could not find active node in gossip"
+	if votePassed && localResult.ClusterNodes != nil {
+		for _, node := range localResult.ClusterNodes {
+			if node.Pubkey == voteAccountResult.NodePubkey {
+				activePassed = true
+				tpuAddr := node.TPU
+				if tpuAddr == nil {
+					tpuAddr = node.TpuQuic // fallback for nodes that only advertise QUIC TPU
+				}
+				if tpuAddr != nil {
+					config.ActiveNodeTPU = *tpuAddr
+					host, _, err := net.SplitHostPort(*tpuAddr)
+					if err == nil {
+						config.ActiveNodeIP = host
+					}
+				} else {
+					activePassed = false
+					activeErrMsg = "Active node found in gossip but has no TPU address (neither tpu nor tpuQuic advertised)"
+				}
+				break
+			}
 		}
 	}
-	modeCheck := checkResult{name: "Mode", passed: modePassed, errMsg: modeErrMsg}
-	if !modePassed && failedCheck == nil {
-		failedCheck = &modeCheck
+	activeCheck := checkResult{name: "Active", passed: activePassed, errMsg: activeErrMsg}
+	if !activePassed && failedCheck == nil {
+		failedCheck = &activeCheck
 	}
-	checks = append(checks, modeCheck)
+	checks = append(checks, activeCheck)
+
+	// Auto-detect SSH target from gossip IP if not explicitly configured
+	if config.RemoteSSH == "" && config.ActiveNodeIP != "" {
+		currentUser, err := osuser.Current()
+		if err == nil {
+			config.RemoteSSH = currentUser.Username + "@" + config.ActiveNodeIP
+		}
+	}
+
+	// Check if fencing is properly configured
+	config.FencingConfigured = config.RemoteSSH != "" && config.RemoteIdentityKeypair != "" &&
+		(config.RemoteLedgerPath != "" || config.RemoteFdctlConfig != "")
+
+	// SSH check - verify connectivity and remote binary (only if fencing is configured)
+	if config.FencingConfigured {
+		// Determine which binary is needed on the remote node
+		var remoteCmd string
+		if config.RemoteFdctlConfig != "" {
+			remoteCmd = "fdctl"
+		} else {
+			remoteCmd = "agave-validator"
+		}
+
+		sshPassed := false
+		sshErrMsg := ""
+		// Test SSH connectivity
+		_, err := sshExec(&config, "echo ok")
+		if err != nil {
+			sshErrMsg = fmt.Sprintf("SSH connection to %s failed: %v", config.RemoteSSH, err)
+		} else {
+			// SSH works, now check if the required binary exists on remote
+			_, err := sshExec(&config, "which "+remoteCmd)
+			if err != nil {
+				sshErrMsg = fmt.Sprintf("'%s' not found in PATH on remote node %s", remoteCmd, config.RemoteSSH)
+			} else {
+				// Verify remote-identity-keypair is NOT the active voting identity
+				// Read the keypair file on the remote node and extract the pubkey
+				catOutput, err := sshExec(&config, "cat "+config.RemoteIdentityKeypair)
+				if err != nil {
+					sshErrMsg = fmt.Sprintf("Cannot read remote-identity-keypair %s on %s: %v", config.RemoteIdentityKeypair, config.RemoteSSH, err)
+				} else {
+					remotePubkey, err := pubkeyFromJSON([]byte(catOutput))
+					if err != nil {
+						sshErrMsg = fmt.Sprintf("Cannot parse remote-identity-keypair %s: %v", config.RemoteIdentityKeypair, err)
+					} else if remotePubkey == voteAccountResult.NodePubkey {
+						sshErrMsg = fmt.Sprintf("remote-identity-keypair (%s) is the ACTIVE voting identity — fencing would be a no-op (must be an unstaked key)", remotePubkey)
+					} else {
+						sshPassed = true
+					}
+				}
+			}
+		}
+		sshCheck := checkResult{name: "SSH", passed: sshPassed, errMsg: sshErrMsg}
+		if !sshPassed && failedCheck == nil {
+			failedCheck = &sshCheck
+		}
+		checks = append(checks, sshCheck)
+	}
 
 	// === Print the table ===
-	// Helper to format a table row with proper 78-char inner width
 	tableRow := func(label, value string) string {
 		content := fmt.Sprintf("  %-16s  %s", label, value)
 		return fmt.Sprintf("║%-78s║", content)
 	}
 
-	// Helper to print a line to both stdout and log file (no timestamp on stdout, timestamp on file)
 	printLine := func(line string) {
 		fmt.Println(line)
 		if config.LogFileHandle != nil {
@@ -286,12 +532,11 @@ func main() {
 		fmt.Fprintf(config.LogFileHandle, "%s Starting Automatic Failover Manager:\n", timestamp)
 	}
 
-	// Print the box without timestamps
 	printLine("╔══════════════════════════════════════════════════════════════════════════════╗")
 	printLine("║                        Automatic Failover Manager                            ║")
 	printLine("╠══════════════════════════════════════════════════════════════════════════════╣")
 	printLine(tableRow("Vote Account", config.VotePubkey))
-	printLine(tableRow("Status", config.NodeMode))
+	printLine(tableRow("Active Node", config.ActiveNodePubkey))
 	if config.MaxVoteLatency > 0 {
 		printLine(tableRow("Latency Limit", fmt.Sprintf("%d slots", config.MaxVoteLatency)))
 	} else {
@@ -299,8 +544,17 @@ func main() {
 	}
 	clientVersion := fmt.Sprintf("%s %s", localResult.ClientType, localResult.Version)
 	printLine(tableRow("Client", clientVersion))
-	printLine(tableRow("Active Identity", localResult.Identity))
+	printLine(tableRow("Local Identity", localResult.Identity))
 	printLine(tableRow("Failover Key", keypairPubkey))
+
+	// Fencing line
+	fencingValue := "Disabled"
+	if config.FencingConfigured {
+		fencingValue = fmt.Sprintf("SSH %s:%d", config.RemoteSSH, config.SSHPort)
+	} else if config.RemoteSSH != "" {
+		fencingValue = fmt.Sprintf("SSH %s:%d (incomplete config)", config.RemoteSSH, config.SSHPort)
+	}
+	printLine(tableRow("Fencing", fencingValue))
 
 	// Alerting line
 	alertingValue := "Disabled"
@@ -311,6 +565,17 @@ func main() {
 	}
 	printLine(tableRow("Alerting", alertingValue))
 
+	// Hooks line
+	hooksValue := "Disabled"
+	if config.PreFailoverHook != "" && config.PostFailoverHook != "" {
+		hooksValue = "Pre + Post"
+	} else if config.PreFailoverHook != "" {
+		hooksValue = "Pre"
+	} else if config.PostFailoverHook != "" {
+		hooksValue = "Post"
+	}
+	printLine(tableRow("Hooks", hooksValue))
+
 	// Logfile line
 	logfileValue := "Disabled"
 	if config.LogFile != "" {
@@ -318,42 +583,61 @@ func main() {
 	}
 	printLine(tableRow("Logfile", logfileValue))
 
-	// Build checks line - split into two rows if needed
-	checksLine1 := ""
-	checksLine2 := ""
+	// Build checks lines (4 per row)
+	var checksLines []string
+	currentLine := ""
 	for i, c := range checks {
 		mark := "✓"
 		if !c.passed {
 			mark = "✗"
 		}
-		checkStr := c.name + " " + mark + "  "
-		if i < 4 {
-			checksLine1 += checkStr
-		} else {
-			checksLine2 += checkStr
+		currentLine += c.name + " " + mark + "  "
+		if (i+1)%4 == 0 || i == len(checks)-1 {
+			checksLines = append(checksLines, strings.TrimSpace(currentLine))
+			currentLine = ""
 		}
 	}
-	printLine(tableRow("Checks", strings.TrimSpace(checksLine1)))
-	if checksLine2 != "" {
-		checksLine2Row := fmt.Sprintf("║%-78s║", "                    "+strings.TrimSpace(checksLine2))
-		printLine(checksLine2Row)
+	for i, line := range checksLines {
+		if i == 0 {
+			printLine(tableRow("Checks", line))
+		} else {
+			printLine(fmt.Sprintf("║%-78s║", "                    "+line))
+		}
 	}
 	printLine("╚══════════════════════════════════════════════════════════════════════════════╝")
 
-	// If any check failed, print error and exit
+	// Print fencing warning if not configured
+	if !config.FencingConfigured {
+		log.Println("WARNING: SSH fencing is not fully configured. Failover will only proceed when active node TPU is unreachable.")
+		log.Println("  Configure --remote-ssh, --remote-identity-keypair, and --remote-ledger/--remote-fdctl-config for full fencing support.")
+	}
+
+	// If any check failed, print all failures and exit
 	if failedCheck != nil {
-		log.Fatalf("Error: %s", failedCheck.errMsg)
+		for _, c := range checks {
+			if !c.passed && c.errMsg != "" {
+				log.Printf("FAILED: [%s] %s", c.name, c.errMsg)
+			}
+		}
+		log.Fatalf("Startup aborted: %d check(s) failed, first failure: %s", func() int {
+			n := 0
+			for _, c := range checks {
+				if !c.passed {
+					n++
+				}
+			}
+			return n
+		}(), failedCheck.errMsg)
 	}
 
 	// === Continue with monitoring ===
 
 	if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
-		// Delinquent after retries, trigger failover
 		triggerFailover("vote account is delinquent", &config)
 		return
 	}
 
-	// Step 7: Continuous monitoring
+	// Continuous monitoring
 	monitorVoteAccount(ctx, checker, &config)
 }
 
@@ -396,7 +680,6 @@ func checkDelinquencyWithRetries(checker *health.Checker, votePubkey string, max
 		}
 	}
 
-	// Only trigger if we confirmed delinquency at least once
 	return delinquentCount > 0
 }
 
@@ -440,7 +723,6 @@ func checkLatencyWithRetries(checker *health.Checker, votePubkey string, maxLate
 		}
 	}
 
-	// Only trigger if we confirmed latency exceeded at least once
 	return exceededCount > 0
 }
 
@@ -474,12 +756,9 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
 		message := fmt.Sprintf(format, args...)
 		if config.IsTTY {
-			// TTY mode: only write to log file if specified
 			logToFile(format, args...)
 		} else {
-			// Non-TTY mode: write to stdout (for journalctl)
 			fmt.Printf("%s %s\n", timestamp, message)
-			// Also write to log file if specified
 			logToFile(format, args...)
 		}
 	}
@@ -494,18 +773,23 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 		return "High"
 	}
 
-	// Print initial box frame for inline update area (only in TTY mode)
-	if config.IsTTY {
-		fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-		fmt.Println("║                                                                              ║")
-		fmt.Println("║                                                                              ║")
-		fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	// Helper to print empty TTY box frame for inline updates
+	printBoxFrame := func() {
+		if config.IsTTY {
+			fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+			fmt.Println("║                                                                              ║")
+			fmt.Println("║                                                                              ║")
+			fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+		}
 	}
+
+	// Print initial box frame for inline update area
+	printBoxFrame()
 
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println() // Move to new line before exit message
+			fmt.Println()
 			log.Println("Monitoring stopped due to shutdown signal")
 			logToFile("Monitoring stopped due to shutdown signal")
 			return
@@ -529,8 +813,6 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 			}
 
 			if config.IsTTY {
-				// TTY mode: Use inline box updates with ANSI codes
-				// Build the two content lines (78 chars inside borders to match 80-char box)
 				countsContent := fmt.Sprintf("  Counts   Low[≤2]: %-6d │   Medium[3-10]: %-6d │   High[11+]: %-5d",
 					lowCount, mediumCount, highCount)
 				statusContent := fmt.Sprintf("  Status   Slot: %-10d │   Last vote: %-10d │   Latency: %-3d",
@@ -538,97 +820,280 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 				countsLine := fmt.Sprintf("║%-78s║", countsContent)
 				statusLine := fmt.Sprintf("║%-78s║", statusContent)
 
-				// Move up 3 lines (to the first content line inside the box) and update
-				fmt.Print("\033[3A")    // Move up 3 lines
-				fmt.Print("\033[K")     // Clear line
-				fmt.Println(countsLine) // Print counts
-				fmt.Print("\033[K")     // Clear line
-				fmt.Println(statusLine) // Print status
-				fmt.Print("\033[K")     // Clear line
+				fmt.Print("\033[3A")
+				fmt.Print("\033[K")
+				fmt.Println(countsLine)
+				fmt.Print("\033[K")
+				fmt.Println(statusLine)
+				fmt.Print("\033[K")
 				fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
-				// Write detailed log to file with category (if log file specified)
 				logToFile("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
 					result.CurrentSlot, result.LastVote, category, latency)
 			} else {
-				// Non-TTY mode: Output detailed logs to stdout (for journalctl)
 				writeDetailedLog("Slot: %d | Last vote: %d | Category: %s | Latency: %d",
 					result.CurrentSlot, result.LastVote, category, latency)
 			}
 
 			// Check for delinquency
 			if result.Delinquent {
-				fmt.Println() // New line before warning
+				fmt.Println()
 				log.Printf("WARNING: Vote account is DELINQUENT!")
 				logToFile("WARNING: Vote account is DELINQUENT!")
 
-				// Verify with retries before triggering failover
 				if checkDelinquencyWithRetries(checker, config.VotePubkey, config.RetryCount) {
 					triggerFailover("vote account is delinquent", config)
 					return
 				}
 				log.Println("Delinquency recovered, continuing monitoring...")
 				logToFile("Delinquency recovered, continuing monitoring...")
-				// Reprint box frame (only in TTY mode)
-				if config.IsTTY {
-					fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-					fmt.Println("║                                                                              ║")
-					fmt.Println("║                                                                              ║")
-					fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
-				}
+				printBoxFrame()
 				continue
 			}
 
 			// Check latency threshold (if set)
 			if config.MaxVoteLatency > 0 && result.SlotsBehind > config.MaxVoteLatency {
-				fmt.Println() // New line before warning
+				fmt.Println()
 				log.Printf("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
 				logToFile("WARNING: Vote latency threshold exceeded! (threshold: %d)", config.MaxVoteLatency)
 
-				// Verify with retries before triggering failover
 				if checkLatencyWithRetries(checker, config.VotePubkey, config.MaxVoteLatency, config.RetryCount) {
 					triggerFailover(fmt.Sprintf("vote latency exceeded threshold (%d slots)", config.MaxVoteLatency), config)
 					return
 				}
 				log.Println("Latency recovered, continuing monitoring...")
 				logToFile("Latency recovered, continuing monitoring...")
-				// Reprint box frame (only in TTY mode)
-				if config.IsTTY {
-					fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-					fmt.Println("║                                                                              ║")
-					fmt.Println("║                                                                              ║")
-					fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
-				}
+				printBoxFrame()
 			}
 		}
 	}
 }
 
-// triggerFailover executes the failover command
+// probeTPU checks if the active node's TPU port is reachable via TCP
+func probeTPU(address string) bool {
+	if address == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// fenceActiveNode attempts to fence the active node before failover.
+// Returns (true, nil) if safe to proceed with failover.
+// Returns (false, error) if fencing failed and failover must be aborted.
+func fenceActiveNode(config *Config) (bool, error) {
+	log.Println("Phase 1: Checking active node liveness via TPU port...")
+
+	alive := probeTPU(config.ActiveNodeTPU)
+
+	if !alive {
+		log.Printf("Active node TPU (%s) is UNREACHABLE - validator appears to be down", config.ActiveNodeTPU)
+
+		// Best-effort: try SSH fencing anyway
+		if config.FencingConfigured {
+			log.Println("Attempting best-effort SSH fencing...")
+			output, err := sshSetIdentity(config)
+			if err != nil {
+				log.Printf("SSH fencing failed (expected if node is down): %v", err)
+			} else {
+				log.Printf("SSH fencing succeeded: %s", strings.TrimSpace(output))
+				// Try to copy tower file since SSH works
+				if err := copyTowerFile(config); err != nil {
+					log.Printf("Tower file copy failed: %v", err)
+				}
+			}
+		}
+
+		// Safe to proceed - validator is down, no double-sign risk
+		return true, nil
+	}
+
+	// Validator is ALIVE - must fence via SSH
+	log.Printf("Active node TPU (%s) is REACHABLE - validator is still running!", config.ActiveNodeTPU)
+	log.Println("SSH fencing is REQUIRED before failover can proceed")
+
+	if !config.FencingConfigured {
+		return false, fmt.Errorf("active validator is alive (TPU reachable at %s) but SSH fencing is not configured", config.ActiveNodeTPU)
+	}
+
+	// Try SSH fencing with retries
+	totalAttempts := 1 + config.SSHRetries
+	for attempt := 1; attempt <= totalAttempts; attempt++ {
+		if attempt > 1 {
+			log.Printf("Waiting 5 seconds before SSH retry %d/%d...", attempt, totalAttempts)
+			time.Sleep(5 * time.Second)
+
+			// Re-check TPU - maybe node went down during the wait
+			if !probeTPU(config.ActiveNodeTPU) {
+				log.Println("Active node TPU became unreachable during retry wait - safe to proceed")
+				return true, nil
+			}
+		}
+
+		log.Printf("SSH fencing attempt %d/%d...", attempt, totalAttempts)
+		output, err := sshSetIdentity(config)
+		if err != nil {
+			log.Printf("SSH fencing attempt %d failed: %v", attempt, err)
+			continue
+		}
+
+		log.Printf("SSH fencing succeeded: %s", strings.TrimSpace(output))
+
+		// Copy tower file for safety
+		if err := copyTowerFile(config); err != nil {
+			log.Printf("Tower file copy failed (non-fatal): %v", err)
+		}
+
+		return true, nil
+	}
+
+	// All retries exhausted - unsafe to proceed
+	return false, fmt.Errorf("active validator is alive (TPU reachable) but all %d SSH fencing attempts failed - manual intervention required", totalAttempts)
+}
+
+// sshSetIdentity switches the active node's identity to the unstaked key via SSH
+func sshSetIdentity(config *Config) (string, error) {
+	var command string
+
+	if config.RemoteFdctlConfig != "" {
+		command = fmt.Sprintf("fdctl set-identity --config %s %s --force",
+			config.RemoteFdctlConfig, config.RemoteIdentityKeypair)
+	} else if config.RemoteLedgerPath != "" {
+		command = fmt.Sprintf("agave-validator --ledger %s set-identity %s",
+			config.RemoteLedgerPath, config.RemoteIdentityKeypair)
+	} else {
+		return "", fmt.Errorf("no remote ledger or fdctl-config configured")
+	}
+
+	log.Printf("SSH executing on %s: %s", config.RemoteSSH, command)
+	return sshExec(config, command)
+}
+
+// sshOptions returns the common SSH/SCP options for the config.
+// For SCP, pass portFlag="-P"; for SSH, pass portFlag="-p".
+func sshOptions(config *Config, portFlag string) []string {
+	args := []string{
+		"-o", fmt.Sprintf("ConnectTimeout=%d", config.SSHTimeout),
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "BatchMode=yes",
+		portFlag, fmt.Sprintf("%d", config.SSHPort),
+	}
+	if config.SSHKey != "" {
+		args = append(args, "-i", config.SSHKey)
+	}
+	return args
+}
+
+// sshExec runs a command on the remote host via SSH
+func sshExec(config *Config, command string) (string, error) {
+	args := sshOptions(config, "-p")
+	args = append(args, config.RemoteSSH, command)
+
+	cmd := exec.Command("ssh", args...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+// copyTowerFile copies the tower file from the active node to the local node via SCP.
+// This prevents potential vote conflicts on restart by preserving the vote history.
+// Currently only supported for Agave validators.
+func copyTowerFile(config *Config) error {
+	// Tower copy requires both nodes to have ledger paths configured
+	if config.RemoteLedgerPath == "" || config.LedgerPath == "" {
+		log.Println("Tower file copy skipped (requires ledger paths for both local and remote nodes)")
+		return nil
+	}
+
+	// Agave tower file: tower-1_9-<identity>.bin
+	towerFileName := fmt.Sprintf("tower-1_9-%s.bin", config.ActiveNodePubkey)
+	remotePath := filepath.Join(config.RemoteLedgerPath, towerFileName)
+	localPath := filepath.Join(config.LedgerPath, towerFileName)
+
+	log.Printf("Copying tower file: %s", towerFileName)
+
+	args := sshOptions(config, "-P")
+	source := fmt.Sprintf("%s:%s", config.RemoteSSH, remotePath)
+	args = append(args, source, localPath)
+
+	cmd := exec.Command("scp", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("scp failed: %v, output: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	log.Printf("Tower file copied successfully to %s", localPath)
+	return nil
+}
+
+// triggerFailover executes the two-phase failover:
+// Phase 1: Fence the active node (switch its identity or confirm it's dead)
+// Phase 2: Switch local identity to staked key
 func triggerFailover(reason string, config *Config) {
 	log.Printf("=== FAILOVER TRIGGERED ===")
 	log.Printf("Reason: %s", reason)
+
+	if config.LogFileHandle != nil {
+		timestamp := time.Now().Format("2006/01/02 15:04:05.000000")
+		fmt.Fprintf(config.LogFileHandle, "%s === FAILOVER TRIGGERED === Reason: %s\n", timestamp, reason)
+	}
+
+	// Pre-failover hook (can abort failover)
+	if config.PreFailoverHook != "" {
+		log.Printf("Running pre-failover hook: %s", config.PreFailoverHook)
+		output, err := runHook(config, config.PreFailoverHook, reason)
+		if len(output) > 0 {
+			log.Printf("Pre-failover hook output: %s", strings.TrimSpace(output))
+		}
+		if err != nil {
+			log.Printf("=== FAILOVER ABORTED by pre-failover hook ===")
+			log.Printf("Hook failed: %v", err)
+			identityPubkey, _ := getPubkeyFromKeypair(config.IdentityKeypair)
+			sendAlerts(config, reason, identityPubkey, false, fmt.Sprintf("pre-failover hook aborted failover: %v", err))
+			os.Exit(1)
+		}
+		log.Println("Pre-failover hook completed successfully")
+	}
+
+	// Phase 1: Fence the active node
+	fenced, err := fenceActiveNode(config)
+	if !fenced {
+		log.Printf("=== FAILOVER ABORTED ===")
+		log.Printf("Cannot safely fence active node: %v", err)
+		log.Println("Manual intervention required! The active node is alive but unreachable via SSH.")
+		log.Println("To resolve: manually switch the active node's identity or shut down its validator process.")
+
+		// Send critical alert about failed fencing
+		identityPubkey, _ := getPubkeyFromKeypair(config.IdentityKeypair)
+		sendAlerts(config, reason, identityPubkey, false, fmt.Sprintf("fencing failed: %v", err))
+		os.Exit(1)
+	}
+
+	// Phase 2: Switch local identity to staked key
+	log.Println("Phase 2: Switching local identity to staked key...")
+
+	identityPubkey, _ := getPubkeyFromKeypair(config.IdentityKeypair)
 
 	var cmd *exec.Cmd
 	var cmdStr string
 
 	switch config.ClientType {
 	case "Frankendancer":
-		// fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json> --force
-		cmdStr = "fdctl set-identity --config " + config.ConfigPath + " " + config.IdentityKeypair + " --force"
-		cmd = exec.Command("fdctl", "set-identity", "--config", config.ConfigPath, config.IdentityKeypair, "--force")
+		cmdStr = "fdctl set-identity --config " + config.FdctlConfigPath + " " + config.IdentityKeypair + " --force"
+		cmd = exec.Command("fdctl", "set-identity", "--config", config.FdctlConfigPath, config.IdentityKeypair, "--force")
 	case "Agave":
-		// agave-validator --ledger </path/to/validator-ledger> set-identity <path/to/keypair.json>
 		cmdStr = "agave-validator --ledger " + config.LedgerPath + " set-identity " + config.IdentityKeypair
 		cmd = exec.Command("agave-validator", "--ledger", config.LedgerPath, "set-identity", config.IdentityKeypair)
 	default:
-		log.Fatalf("Error: Unknown client type '%s', cannot execute failover", config.ClientType)
+		alertErr := fmt.Sprintf("unknown client type '%s', cannot execute set-identity", config.ClientType)
+		sendAlerts(config, reason, identityPubkey, false, alertErr)
+		log.Fatalf("Error: %s", alertErr)
 	}
 
 	log.Printf("Executing: %s", cmdStr)
-
-	// Get identity pubkey for alerts
-	identityPubkey, _ := getPubkeyFromKeypair(config.IdentityKeypair)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -636,7 +1101,11 @@ func triggerFailover(reason string, config *Config) {
 		if len(output) > 0 {
 			log.Printf("Command output: %s", string(output))
 		}
-		sendAlerts(config, reason, identityPubkey, false, "set-identity command failed")
+		alertErr := fmt.Sprintf("local set-identity failed: %v", err)
+		if len(output) > 0 {
+			alertErr = fmt.Sprintf("local set-identity failed: %v (output: %s)", err, strings.TrimSpace(string(output)))
+		}
+		sendAlerts(config, reason, identityPubkey, false, alertErr)
 		os.Exit(1)
 	}
 
@@ -647,20 +1116,32 @@ func triggerFailover(reason string, config *Config) {
 
 	// Verify identity switch via RPC
 	verifyIdentitySwitch(config, reason)
+
+	// Post-failover hook (best-effort, does not affect outcome)
+	if config.PostFailoverHook != "" {
+		log.Printf("Running post-failover hook: %s", config.PostFailoverHook)
+		output, err := runHook(config, config.PostFailoverHook, reason)
+		if len(output) > 0 {
+			log.Printf("Post-failover hook output: %s", strings.TrimSpace(output))
+		}
+		if err != nil {
+			log.Printf("Warning: Post-failover hook failed (non-fatal): %v", err)
+		} else {
+			log.Println("Post-failover hook completed successfully")
+		}
+	}
 }
 
 // verifyIdentitySwitch confirms the identity was switched by querying the RPC
 func verifyIdentitySwitch(config *Config, reason string) {
 	log.Println("Verifying identity switch via RPC...")
 
-	// Get expected pubkey from keypair file
 	expectedPubkey, err := getPubkeyFromKeypair(config.IdentityKeypair)
 	if err != nil {
 		log.Printf("Warning: Could not read keypair for verification: %v", err)
 		return
 	}
 
-	// Query current identity from RPC
 	client := rpc.NewClient(config.LocalRPCEndpoint)
 	currentIdentity, err := client.GetIdentity()
 	if err != nil {
@@ -677,6 +1158,26 @@ func verifyIdentitySwitch(config *Config, reason string) {
 		sendAlerts(config, reason, expectedPubkey, false, fmt.Sprintf("identity mismatch: expected %s, got %s", expectedPubkey, currentIdentity))
 		os.Exit(1)
 	}
+}
+
+// runHook executes a hook command via bash -l -c with failover context as environment variables.
+// Returns the combined output and any error.
+func runHook(config *Config, hookCmd string, reason string) (string, error) {
+	cmd := exec.Command("bash", "-l", "-c", hookCmd)
+	cmd.Env = append(os.Environ(),
+		"FAILOVER_REASON="+reason,
+		"FAILOVER_VOTE_PUBKEY="+config.VotePubkey,
+		"FAILOVER_ACTIVE_NODE="+config.ActiveNodePubkey,
+		"FAILOVER_ACTIVE_IP="+config.ActiveNodeIP,
+		"FAILOVER_LOCAL_IDENTITY="+config.PreviousIdentity,
+		"FAILOVER_NEW_IDENTITY="+func() string {
+			pk, _ := getPubkeyFromKeypair(config.IdentityKeypair)
+			return pk
+		}(),
+		"FAILOVER_HOSTNAME="+config.Hostname,
+	)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
 }
 
 // getRequiredCommand returns the required CLI command based on client type
@@ -704,7 +1205,10 @@ func getPubkeyFromKeypair(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read keypair file: %w", err)
 	}
+	return pubkeyFromJSON(data)
+}
 
+func pubkeyFromJSON(data []byte) (string, error) {
 	var keypair []byte
 	if err := json.Unmarshal(data, &keypair); err != nil {
 		return "", fmt.Errorf("failed to parse keypair JSON: %w", err)
@@ -714,20 +1218,13 @@ func getPubkeyFromKeypair(path string) (string, error) {
 		return "", fmt.Errorf("invalid keypair length: expected 64 bytes, got %d", len(keypair))
 	}
 
-	// Public key is the last 32 bytes
 	pubkey := keypair[32:64]
 	return base58.Encode(pubkey), nil
 }
 
 // sendAlerts sends notifications via configured alert channels
 func sendAlerts(config *Config, reason string, newIdentity string, success bool, errorMsg string) {
-	// Determine transition direction (with hostname prefix)
-	var transition string
-	if config.NodeMode == "ACTIVE" {
-		transition = fmt.Sprintf("[%s ACTIVE→STANDBY]", config.Hostname)
-	} else {
-		transition = fmt.Sprintf("[%s STANDBY→ACTIVE]", config.Hostname)
-	}
+	transition := fmt.Sprintf("[%s STANDBY→ACTIVE]", config.Hostname)
 
 	if config.PagerDutyKey != "" {
 		sendPagerDutyAlert(config.PagerDutyKey, config.VotePubkey, config.PreviousIdentity, newIdentity, transition, reason, success, errorMsg)
@@ -752,8 +1249,6 @@ func sendPagerDutyAlert(routingKey, votePubkey, previousIdentity, newIdentity, t
 		severity = "warning"
 	}
 
-	// Include vote pubkey in summary for visibility in Slack integration
-	// Transition already includes brackets and hostname
 	if success {
 		summary = fmt.Sprintf("%s Failover %s for %s: %s", transition, status, votePubkey, reason)
 	} else {
@@ -817,7 +1312,6 @@ func sendWebhookAlert(webhookURL, customBody, votePubkey, previousIdentity, newI
 	}
 
 	if customBody != "" {
-		// Replace placeholders in custom body
 		body := strings.ReplaceAll(customBody, "{reason}", reason)
 		body = strings.ReplaceAll(body, "{identity}", newIdentity)
 		body = strings.ReplaceAll(body, "{status}", status)
@@ -828,8 +1322,6 @@ func sendWebhookAlert(webhookURL, customBody, votePubkey, previousIdentity, newI
 		body = strings.ReplaceAll(body, "{new_identity}", newIdentity)
 		jsonData = []byte(body)
 	} else {
-		// Default payload (Slack-compatible)
-		// Transition already includes brackets and hostname
 		var text string
 		if success {
 			text = fmt.Sprintf("%s Failover %s\nReason: %s\nVote account: %s\nPrevious identity: %s\nNew identity: %s",

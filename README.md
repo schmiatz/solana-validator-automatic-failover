@@ -1,10 +1,10 @@
 # Automatic Failover for Solana Validators
 
-> 🚨 **CRITICAL: MAIN NODE MUST NOT RESTART WITH STAKED IDENTITY** 🚨
+> **CRITICAL: MAIN NODE MUST NOT RESTART WITH STAKED IDENTITY**
 >
 > Before using this tool, you **MUST** ensure your **main/primary validator** is configured to not reboot with its staked identity keypair.
 >
-> **Why?** When failover occurs, this tool executes a `set-identity` command which may kill/restart the main node. If the main node restarts with the staked identity, it will immediately conflict with the spare node that just took over — potentially killing the spare and causing a failover loop.
+> **Why?** When failover occurs, this tool switches the main node's identity via SSH (STONITH fencing). If the main node restarts with the staked identity, it will immediately conflict with the spare node that just took over — potentially causing a failover loop.
 >
 > **Solution:** Configure your main validator's startup script/service to use a **different, unstaked identity keypair** at boot. Only switch to the staked identity after manual verification or via a separate identity-switch mechanism.
 >
@@ -12,59 +12,124 @@
 
 ---
 
-A tool to monitor Solana validator health and trigger automatic failover when issues are detected.
+A tool to monitor Solana validator health and trigger automatic failover with STONITH fencing when issues are detected. Supports Agave and Frankendancer.
 
-## Usage
+## Quick Start
 
 ```bash
-./bin/failover --votepubkey <VOTE_PUBKEY> --identity-keypair --config/--ledger <PATH> [options]
+# Build
+go build -o bin/failover ./cmd/failover
+
+# Run with TOML config (recommended)
+./bin/failover --config /path/to/config.toml
+
+# Run with CLI flags
+./bin/failover --votepubkey <VOTE_PUBKEY> --identity-keypair <PATH> --ledger <PATH>
 ```
+
+See [example-config.toml](example-config.toml) for all available options with descriptions.
+
+## Configuration
+
+Three-layer precedence: **defaults → TOML config → CLI flags**
+
+CLI flags always win over TOML values. TOML values override built-in defaults.
 
 ### Parameters
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
+| `--config` | No | - | Path to TOML configuration file |
 | `--votepubkey` | **Yes** | - | Vote account public key to monitor |
-| `--identity-keypair` | **Yes** | - | Path to identity keypair JSON file (for set-identity command) |
-| `--config` | **Frankendancer only** | - | Path to config.toml (required for Frankendancer nodes) |
-| `--ledger` | **Agave only** | - | Path to validator ledger directory (required for Agave nodes) |
-| `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint to query |
-| `--max-vote-latency` | No | delinquency | Trigger failover when this many slots behind (default: only on delinquency) |
-| `--retry-count` | No | `3` | Number of retries before triggering failover |
-| `--pagerduty-key` | No | - | PagerDuty routing key for alerts on failover |
-| `--webhook-url` | No | - | Generic webhook URL to POST on failover |
-| `--webhook-body` | No | - | Custom webhook body (supports `{reason}`, `{identity}` placeholders) |
-| `--log` | No | - | Path to log file for detailed per-check logging (see below) |
+| `--identity-keypair` | **Yes** | - | Path to staked identity keypair JSON file |
+| `--ledger` | **Agave** | - | Path to validator ledger directory |
+| `--fdctl-config` | **Frankendancer** | - | Path to fdctl config.toml |
+| `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint |
+| `--max-vote-latency` | No | `0` (delinquency only) | Trigger failover when this many slots behind |
+| `--retry-count` | No | `3` | Consecutive checks before confirming failover |
 
-### Example
+#### SSH Fencing (STONITH)
+
+Required for safe failover when the active validator is still alive. Without these, failover only proceeds when the active node's TPU port is unreachable.
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `--remote-ssh` | No | Auto-detected from gossip | SSH target for active node (`user@host`) |
+| `--ssh-key` | No | System default | Path to SSH private key |
+| `--ssh-port` | No | `22` | SSH port |
+| `--remote-identity-keypair` | For fencing | - | Path to unstaked keypair on active node |
+| `--remote-ledger` | For Agave fencing | - | Ledger path on active node |
+| `--remote-fdctl-config` | For FD fencing | - | fdctl config path on active node |
+| `--ssh-timeout` | No | `5` | SSH connection timeout in seconds |
+| `--ssh-retries` | No | `2` | SSH retries when active node is alive |
+
+Fencing is considered fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` or `remote-fdctl-config`) are all set.
+
+#### Hooks
+
+Bash commands executed via `bash -l -c` (login shell — sources `.profile`, gets full PATH under systemd).
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `--pre-failover-hook` | No | - | Runs before fencing. **Non-zero exit aborts the failover.** |
+| `--post-failover-hook` | No | - | Runs after successful identity switch. Best-effort (failures logged). |
+
+Environment variables available in hooks:
+
+| Variable | Description |
+|----------|-------------|
+| `FAILOVER_REASON` | Why failover was triggered (e.g. "vote account is delinquent") |
+| `FAILOVER_VOTE_PUBKEY` | Vote account public key |
+| `FAILOVER_ACTIVE_NODE` | Identity pubkey of the active node |
+| `FAILOVER_ACTIVE_IP` | IP address of the active node |
+| `FAILOVER_LOCAL_IDENTITY` | Current local identity (before failover) |
+| `FAILOVER_NEW_IDENTITY` | The staked identity being assumed |
+| `FAILOVER_HOSTNAME` | Hostname of this machine |
+
+#### Alerting
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `--pagerduty-key` | No | - | PagerDuty Events API v2 routing key |
+| `--webhook-url` | No | - | Generic webhook URL (receives JSON POST) |
+| `--webhook-body` | No | - | Custom webhook body template (see placeholders below) |
+
+#### Logging
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `--log` | No | - | Log file path (logs to both stdout and file) |
+
+### Example CLI
 
 ```bash
-# Frankendancer node
+# Minimal Agave setup (no fencing)
 ./bin/failover \
   --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
-  --identity-keypair /home/solana/identity.json \
-  --config /home/solana/config.toml
+  --identity-keypair /home/sol/staked-identity.json \
+  --ledger /home/sol/ledger
 
-# Agave node
+# Full production setup with STONITH fencing (Agave)
 ./bin/failover \
+  --config /home/sol/failover.toml \
   --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
-  --identity-keypair /home/solana/identity.json \
-  --ledger /home/solana/validator-ledger
-
-# With vote latency threshold (triggers failover if >50 slots behind)
-./bin/failover \
-  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
-  --identity-keypair /home/solana/identity.json \
-  --config /home/solana/config.toml \
-  --max-vote-latency 50
-
-# Full production setup with logging
-./bin/failover \
-  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
-  --identity-keypair /home/solana/identity.json \
-  --config /home/solana/config.toml \
+  --identity-keypair /home/sol/staked-identity.json \
+  --ledger /home/sol/ledger \
+  --remote-ssh sol@10.0.0.1 \
+  --remote-identity-keypair /home/sol/unstaked-identity.json \
+  --remote-ledger /home/sol/ledger \
   --max-vote-latency 50 \
-  --log /home/solana/failover.log
+  --pagerduty-key YOUR_KEY \
+  --log /home/sol/failover.log
+
+# Frankendancer
+./bin/failover \
+  --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
+  --identity-keypair /home/sol/staked-identity.json \
+  --fdctl-config /home/sol/fdctl-config.toml \
+  --remote-ssh sol@10.0.0.1 \
+  --remote-identity-keypair /home/sol/unstaked-identity.json \
+  --remote-fdctl-config /home/sol/fdctl-config.toml
 ```
 
 ---
@@ -73,160 +138,69 @@ A tool to monitor Solana validator health and trigger automatic failover when is
 
 ### Overview
 
-The client can run on both **active** and **standby** validator nodes, automatically detecting which mode it's in and adjusting its behavior accordingly.
+The client runs on both **active** and **standby** validator nodes, automatically detecting which mode it's in.
 
-1. **Startup**: Check if local node is healthy
-2. **Active/Standby detection**: Check if this node is the active validator for the vote account
-   - Compares local node identity with vote account's `nodePubkey`
-   - If they match → **ACTIVE mode** (this node is currently validating)
-   - If they don't match → **STANDBY mode** (this node is a hot spare)
-3. **Identity keypair verification**: Different checks based on detected mode
-   - **ACTIVE mode**: Verify `--identity-keypair` is DIFFERENT from vote account's validator (unstaked keypair for failover)
-   - **STANDBY mode**: Verify `--identity-keypair` MATCHES the vote account's validator (staked keypair to take over)
-4. **Initial delinquency check**: Check if monitored vote account is already delinquent
-   - If delinquent → retry 2x (1s apart) → trigger failover
-5. **Continuous monitoring**: Check vote account status every second
-   - Always monitors for delinquency
-   - If `--max-vote-latency` is set, also triggers failover when latency exceeds threshold
-   - Any issue detected → retry 2x (1s apart) → trigger failover
+1. **Startup**: Health check, client detection, gossip verification, identity validation
+2. **Mode detection**: Compares local identity with vote account's `nodePubkey`
+   - Match → **ACTIVE mode** (this node is currently validating)
+   - No match → **STANDBY mode** (this node is a hot spare)
+3. **Identity verification**: Validates `--identity-keypair` based on mode
+   - **ACTIVE**: Keypair must be DIFFERENT from voting identity (unstaked keypair for stepping down)
+   - **STANDBY**: Keypair must MATCH the vote account's validator (staked keypair to take over)
+4. **Continuous monitoring**: Checks vote account status every second
+   - Monitors for delinquency (always)
+   - Monitors vote latency threshold (if `--max-vote-latency` is set)
+   - Issue detected → retries `retry-count` times (1s apart) → triggers failover
+
+### Failover Process (Two-Phase with STONITH)
+
+When failover is triggered:
+
+1. **Pre-failover hook** (if configured): Runs custom command. Non-zero exit **aborts** the failover.
+
+2. **Phase 1 — Fence the active node (STONITH)**:
+   - Probe active node's TPU port to determine if it's alive
+   - If **dead** (TPU unreachable): Safe to proceed. Best-effort SSH fencing attempted anyway.
+   - If **alive** (TPU reachable): SSH fencing is **required**:
+     - SSH into active node and run `set-identity` to switch it to the unstaked keypair
+     - Copy tower file from active node to preserve vote history
+     - If SSH fencing fails → failover is **aborted** (prevents double-signing)
+
+3. **Phase 2 — Switch local identity**:
+   - Execute `set-identity` on the local node to assume the staked keypair
+   - Verify identity switch via RPC query
+
+4. **Post-failover hook** (if configured): Best-effort execution, failures are logged but don't affect outcome.
 
 ### Why use `--max-vote-latency`?
 
-A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency X`, the failover can trigger before delinquency would occur — avoiding a downtime at all.
+A validator becomes delinquent when it's >150 slots behind. If you set `--max-vote-latency X`, the failover can trigger before delinquency occurs — avoiding downtime entirely.
 
 ---
 
-## Health Check Process
+## Startup Checks
 
-The tool performs the following checks on the **local node** to verify it's ready to take over if needed:
+The tool performs these checks before starting monitoring:
 
-### Step 1: Check Local Node Health (`getHealth`)
+| Check | What it verifies |
+|-------|-----------------|
+| **Health** | Local node RPC is responding and caught up |
+| **Gossip** | Node appears in cluster gossip, TCP port reachable |
+| **PATH** | Required CLI tool (`agave-validator` or `fdctl`) is in PATH |
+| **Config/Ledger** | Configured path exists on disk |
+| **Keypair** | Identity keypair file is valid |
+| **Identity** | Keypair matches expected role (staked/unstaked for mode) |
+| **Voting** | Vote account exists and is queryable |
+| **Mode** | ACTIVE/STANDBY detection is consistent |
+| **SSH** | SSH connectivity and remote binary available (if fencing configured) |
 
-**RPC Method:** `getHealth`
-
-**What it checks:**
-- Is the RPC endpoint responding?
-- Is the node caught up with the network?
-- Is the node in a healthy state?
-
-**Behavior:**
-- If healthy → Proceed to detailed checks
-- If unhealthy → Retry every 3 seconds until healthy
-
-```
-2025/12/24 12:52:50.981885 Checking local node health...
-2025/12/24 12:52:52.202651 Local node is healthy
-```
-
----
-
-### Step 2: Detect Node Type (`getVersion`)
-
-**RPC Method:** `getVersion`
-
-**What it checks:**
-- What software is the node running (Agave/Jito, Frankendancer)?
-- What version is installed?
-
-```
-2025/12/24 12:52:52.227780 Client: Agave
-2025/12/24 12:52:52.227818 Version: 3.1.4
-```
-
----
-
-### Step 3: Get Node Identity (`getIdentity`)
-
-**RPC Method:** `getIdentity`
-
-**What it returns:**
-- The node's identity public key (used for gossip lookup)
-
----
-
-### Step 4: Check Gossip Status (`getClusterNodes`)
-
-**RPC Method:** `getClusterNodes`
-
-**What it checks:**
-- Does the node's identity appear in the cluster gossip?
-- What is the advertised gossip address?
-
-| Field | Description |
-|-------|-------------|
-| `In gossip` | Whether the node appears in the cluster's gossip list |
-| `Gossip address` | The IP:port where the node advertises its gossip service |
-
----
-
-### Step 5: Probe Gossip Port (TCP Connect)
-
-**Method:** TCP dial to gossip address with 2 second timeout
-
-**What it checks:**
-- Can we actually reach the node's gossip port?
-- Is the node online and accepting connections?
-
-| Field | Description |
-|-------|-------------|
-| `TCP reachable` | `true` if TCP connection succeeded, `false` if unreachable |
-
----
-
-### Step 6: Active/Standby Detection
-
-**What it checks:**
-- Is this node the active validator for the monitored vote account?
-- Compares local node identity with the vote account's `nodePubkey`
-
-| Status | Meaning | Action |
-|--------|---------|--------|
-| `ACTIVE` | This node is currently validating for the vote account | Continue (verify unstaked keypair) |
-| `STANDBY` | Another node is validating for the vote account | Continue (verify staked keypair) |
-
-```
-2026/01/02 14:43:47.654035 Checking if this node is the active validator for vote account DvAmv...
-2026/01/02 14:43:47.971042 Node status: STANDBY (vote account is being validated by HH1d1t8...)
-```
-
----
-
-### Step 7: Identity Keypair Verification
-
-**What it checks:**
-- Validates `--identity-keypair` based on the detected mode
-
-| Mode | Required | Reason |
-|------|----------|--------|
-| **ACTIVE** | Keypair must be DIFFERENT from `nodePubkey` | Failover swaps away from the voting identity |
-| **STANDBY** | Keypair must MATCH `nodePubkey` | Failover swaps TO the voting identity |
-
-**ACTIVE mode success:**
-```
-Node status: ACTIVE (this node is currently validating for vote account DvAmv...)
-Identity keypair verified: different from voting identity
-```
-
-**STANDBY mode success:**
-```
-Node status: STANDBY (vote account is being validated by HH1d1t8...)
-Identity keypair verified: matches vote account's validator
-```
-
-**Error examples:**
-```
-# ACTIVE mode - wrong keypair (voting identity provided)
-Error: Identity keypair is the current voting identity. On an active node, --identity-keypair must be a different keypair.
-
-# STANDBY mode - wrong keypair (doesn't match staked identity)
-Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not match the vote account's validator (HH1d1t8...)
-```
+All failed checks are printed before exit so you can fix everything in one pass.
 
 ---
 
 ## Example Output
 
-### Successful Startup (ACTIVE node)
+### Successful Startup (STANDBY node with fencing)
 
 ```
 2026/01/02 16:42:13 Starting Automatic Failover Manager:
@@ -234,87 +208,21 @@ Error: Identity keypair mismatch. The provided keypair (3ELeRTT...) does not mat
 ║                        Automatic Failover Manager                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Vote Account       DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA             ║
-║  Status             ACTIVE                                                   ║
+║  Active Node        5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K             ║
 ║  Latency Limit      50 slots                                                 ║
-║  Client             Frankendancer 0.806.30102                                ║
-║  Active Identity    HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL             ║
-║  Failover Key       CL6kvcozv6BDnXA3vQKnq8VjwrNx31zMo24Erpi6SNcE             ║
-║  Alerting           PagerDuty                                                ║
-║  Logfile            /home/solana/failover.log                                ║
-║  Checks             Health ✓  Gossip ✓  PATH ✓  Config ✓                     ║
-║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✓                  ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
-╔══════════════════════════════════════════════════════════════════════════════╗
-║  Counts   Low[≤2]: 1      │   Medium[3-10]: 0      │   High[11+]: 0          ║
-║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-```
-
-### Successful Startup (STANDBY node)
-
-```
-2026/01/02 16:42:13 Starting Automatic Failover Manager:
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                        Automatic Failover Manager                            ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  Vote Account       DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA             ║
-║  Status             STANDBY                                                  ║
-║  Latency Limit      delinquency                                              ║
 ║  Client             Agave 3.1.5                                              ║
-║  Active Identity    5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K             ║
+║  Local Identity     CL6kvcozv6BDnXA3vQKnq8VjwrNx31zMo24Erpi6SNcE             ║
 ║  Failover Key       HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL             ║
-║  Alerting           Disabled                                                 ║
-║  Logfile            Disabled                                                 ║
+║  Fencing            SSH sol@10.0.0.1:22                                      ║
+║  Alerting           PagerDuty                                                ║
+║  Hooks              Pre + Post                                               ║
+║  Logfile            /home/sol/failover.log                                   ║
 ║  Checks             Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
 ║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✓                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
-╔══════════════════════════════════════════════════════════════════════════════╗
-║  Counts   Low[≤2]: 1      │   Medium[3-10]: 0      │   High[11+]: 0          ║
-║  Status   Slot: 379074199 │   Last vote: 379074198   │   Latency: 1          ║
-╚══════════════════════════════════════════════════════════════════════════════╝
 ```
-
-### Failed Check (Mode error)
-
-```
-2026/01/02 16:42:13 Starting Automatic Failover Manager:
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                        Automatic Failover Manager                            ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  Vote Account       DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA             ║
-║  Status             STANDBY                                                  ║
-║  Latency Limit      delinquency                                              ║
-║  Client             Agave 3.1.5                                              ║
-║  Active Identity    5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K             ║
-║  Failover Key       3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z             ║
-║  Alerting           Disabled                                                 ║
-║  Logfile            Disabled                                                 ║
-║  Checks             Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
-║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✗                  ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-Error: On STANDBY node, --identity-keypair must match voting identity (HH1d1t8...)
-```
-
-### Unhealthy Node (Waiting)
-
-```
-Waiting for node to become healthy...
-Node not healthy yet: failed to make request: dial tcp 127.0.0.1:8899: connection refused
-Node not healthy yet: failed to make request: dial tcp 127.0.0.1:8899: connection refused
-Node is now healthy
-╔══════════════════════════════════════════════════════════════════════════════╗
-...
-```
-
-**Interpretation:** The tool will retry every 3 seconds until the node becomes healthy, then display the status table.
-
----
 
 ### Monitoring Output
-
-During monitoring, the terminal shows a compact box display that updates in place:
 
 ```
 2026/01/02 16:42:13 Starting Votelatency Monitoring every 1s:
@@ -324,149 +232,69 @@ During monitoring, the terminal shows a compact box display that updates in plac
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
-The thresholds are shown in brackets:
-- **Low[≤2]**: Excellent - voting within ~800ms
-- **Medium[3-10]**: Acceptable - 1-4 seconds behind
-- **High[11+]**: Concerning - approaching warning zone
+Latency thresholds:
+- **Low[≤2]**: Excellent — voting within ~800ms
+- **Medium[3-10]**: Acceptable — 1-4 seconds behind
+- **High[11+]**: Concerning — approaching warning zone
 
-#### Detailed Logging with `--log`
+### Detailed Log File
 
-When `--log /path/to/file.log` is specified, the terminal continues showing the compact inline display, while the log file receives detailed per-check output:
+When `--log` is set, the terminal shows the compact display while the log file gets per-check detail:
 
 ```
 2026/01/02 16:04:18.155751 Slot: 379082648 | Last vote: 379082647 | Category: Low | Latency: 1
-2026/01/02 16:04:19.156359 Slot: 379082651 | Last vote: 379082650 | Category: Low | Latency: 1
-2026/01/02 16:04:37.157293 Slot: 379082697 | Last vote: 379082695 | Category: Low | Latency: 2
 2026/01/02 16:05:11.157280 Slot: 379082785 | Last vote: 379082780 | Category: Medium | Latency: 5
 2026/01/02 16:05:45.156892 Slot: 379082820 | Last vote: 379082805 | Category: High | Latency: 15
 ```
 
-This allows you to:
-- Monitor in real-time with a clean terminal display
-- Analyze historical latency patterns from the log file
-- Debug issues by reviewing the full slot-by-slot history
-
 ---
 
-## Failover Triggers
+## Alerts
 
-The following conditions trigger a failover:
+Alerts are sent on **both success and failure** of the failover process, as well as when fencing fails or a pre-hook aborts.
 
-1. **Delinquent:** Vote account is marked delinquent at startup (checked 3 times, 1s apart)
-2. **Vote latency exceeded:** Vote account is behind by more than `--max-vote-latency` slots (checked 3 times, 1s apart)
+### PagerDuty
 
-### Failover Commands
-
-When triggered, the tool executes the appropriate set-identity command:
-
-**Frankendancer:**
-```bash
-fdctl set-identity --config <path/to/config.toml> <path/to/keypair.json> --force
-```
-
-**Agave:**
-```bash
-agave-validator --ledger <path/to/validator-ledger> set-identity <path/to/keypair.json>
-```
-
-### Verification
-
-After executing the set-identity command, the tool verifies the identity switch was successful:
-
-1. Queries `getIdentity` from the local RPC
-2. Compares the returned identity with the pubkey from `--identity-keypair`
-3. If they match → logs success and exits
-4. If they don't match → logs error and exits with code 1
-
-### Alerts
-
-Alerts are sent on **both success and failure** of the failover process. You'll be notified if:
-- ✅ Failover succeeded and identity switch was verified
-- ❌ The set-identity command failed
-- ❌ Identity verification failed (mismatch)
-
-**PagerDuty** (simple — just provide routing key):
 ```bash
 --pagerduty-key YOUR_PAGERDUTY_ROUTING_KEY
 ```
 
-PagerDuty summary format (visible in Slack integration):
+Summary format:
 ```
-[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS for DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA: vote account delinquent
+[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS for DvAmv1Vb...: vote account delinquent
 ```
 
-**Generic Webhook** (works with Slack, Discord, etc.):
+### Generic Webhook
+
 ```bash
 --webhook-url https://hooks.slack.com/services/...
 ```
 
-The default payload is Slack-compatible and includes full context:
+Default payload (Slack-compatible):
 ```json
 {"text": "[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS\nReason: vote account delinquent\nVote account: DvAmv1Vb...\nPrevious identity: 5rfxa1dG...\nNew identity: HH1d1t8x..."}
 ```
 
-**Telegram** (requires custom body with chat_id):
+### Telegram
+
 ```bash
---webhook-url "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage" \
---webhook-body '{"chat_id": "YOUR_CHAT_ID", "text": "{transition} Failover {status}: {reason}\nVote account: {vote_account}\nNew identity: {new_identity}"}'
+--webhook-url "https://api.telegram.org/bot<TOKEN>/sendMessage" \
+--webhook-body '{"chat_id": "CHAT_ID", "text": "{transition} Failover {status}: {reason}"}'
 ```
 
-**Custom Webhook Body** (optional, with placeholders):
-```bash
---webhook-url https://api.example.com/alert \
---webhook-body '{"message": "{transition} {status}: {reason}", "node": "{new_identity}"}'
-```
+### Custom Webhook Body
 
-Supported placeholders:
-- `{transition}` - Transition direction with hostname (e.g., `[validator-backup-01 STANDBY→ACTIVE]`)
-- `{reason}` - Failover reason
-- `{status}` - `SUCCESS` or `FAILED`
-- `{error}` - Error message (if failed)
-- `{vote_account}` - Vote account public key
-- `{previous_identity}` - Identity before failover
-- `{new_identity}` - Identity after failover
-- `{identity}` - Alias for `{new_identity}`
-
-**Example alert messages:**
-
-✅ **STANDBY node taking over (success):**
-```
-[validator-backup-01 STANDBY→ACTIVE] Failover SUCCESS
-Reason: vote account delinquent
-Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
-Previous identity: 5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K
-New identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
-```
-
-✅ **ACTIVE node stepping down (success):**
-```
-[validator-primary-01 ACTIVE→STANDBY] Failover SUCCESS
-Reason: vote latency exceeded 50 slots
-Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
-Previous identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
-New identity: 3ELeRTTg5W5hAYaEFznzFV1jknNFkjHqS8ytwvQEQP1Z
-```
-
-❌ **Failed failover:**
-```
-[validator-backup-01 STANDBY→ACTIVE] Failover FAILED
-Reason: vote account delinquent
-Vote account: DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA
-Previous identity: 5rfxa1dGE3AysgHJLSPMBxgo2DUyhp8zQbapRS9spS1K
-New identity: HH1d1t8xjY8ERpFPfKYdWzveEJYkRZE5b6ahewc2SKLL
-Error: set-identity command failed
-```
+Supported placeholders: `{transition}`, `{reason}`, `{status}`, `{error}`, `{vote_account}`, `{previous_identity}`, `{new_identity}`, `{identity}`
 
 ---
 
 ## Requirements
 
-- **Go 1.21+** (tested with Go 1.21.6)
-- **Validator CLI in PATH** (required for failover command):
-  - **Agave nodes**: `agave-validator` must be in PATH
-  - **Frankendancer nodes**: `fdctl` must be in PATH
-
-The client automatically detects the node type and checks for the appropriate CLI tool.
+- **Go 1.21+**
+- **Validator CLI in PATH**:
+  - Agave: `agave-validator`
+  - Frankendancer: `fdctl`
+- **SSH access** to active node (for STONITH fencing)
 
 ## Building
 
@@ -478,14 +306,10 @@ go build -o bin/failover ./cmd/failover
 
 ```
 automatic-failover/
-├── cmd/failover/main.go      # Entry point, CLI parsing
+├── cmd/failover/main.go      # Core logic, CLI parsing, failover engine
 ├── internal/
 │   ├── rpc/client.go         # Solana JSON-RPC client
 │   └── health/checker.go     # Health checking logic
+├── example-config.toml       # Example TOML configuration with all options
 └── bin/failover              # Compiled binary
 ```
-
-## ToDos
-- add parameter for specific unstaked and staked identitiy to make the client being able to always run, even after a set identity
-- pre hooks and post hooks
-- conquer the world

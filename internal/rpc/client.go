@@ -365,6 +365,7 @@ type ClusterNode struct {
 	Pubkey       string  `json:"pubkey"`
 	Gossip       *string `json:"gossip"`
 	TPU          *string `json:"tpu"`
+	TpuQuic      *string `json:"tpuQuic"`
 	RPC          *string `json:"rpc"`
 	Version      *string `json:"version"`
 	FeatureSet   *uint32 `json:"featureSet"`

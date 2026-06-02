@@ -20,8 +20,11 @@ identity-keypair = "/home/sol/staked-identity.json"
 # Required for Agave. Path to validator ledger directory.
 ledger = "/home/sol/ledger"
 
-# Required for Frankendancer. Path to fdctl config.toml (use this instead of ledger for Firedancer).
+# Required for Frankendancer. Path to fdctl config.toml (use this instead of ledger for set-identity).
 # fdctl-config = "/home/sol/fdctl-config.toml"
+#
+# Frankendancer spare with SSH fencing: also set ledger (local) + remote-ledger so the Tower
+# startup check passes and tower-1_9-<identity>.bin is copied from the active Agave node.
 
 # --- SSH Fencing (STONITH) ---
 # Without these, failover only proceeds when the active validator identity has left gossip.

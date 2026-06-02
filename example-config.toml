@@ -24,7 +24,7 @@ ledger = "/home/sol/ledger"
 # fdctl-config = "/home/sol/fdctl-config.toml"
 
 # --- SSH Fencing (STONITH) ---
-# Without these, failover only proceeds when the active node's TPU port is unreachable.
+# Without these, failover only proceeds when the active validator identity has left gossip.
 
 # Optional. SSH target for the active node (user@host). Default: auto-detected from gossip.
 # remote-ssh = "sol@10.0.0.1"

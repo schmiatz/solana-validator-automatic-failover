@@ -46,11 +46,11 @@ CLI flags always win over TOML values. TOML values override built-in defaults.
 | `--fdctl-config` | **Frankendancer** | - | Path to fdctl config.toml |
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint |
 | `--max-vote-latency` | No | `0` (delinquency only) | Trigger failover when this many slots behind |
-| `--retry-count` | No | `3` | Consecutive checks before confirming failover |
+| `--retry-count` | No | `3` | Consecutive latency/delinquency RPC checks before confirming failover (1s apart) |
 
 #### SSH Fencing (STONITH)
 
-Required for safe failover when the active validator is still alive. Without these, failover only proceeds when the active node's TPU port is unreachable.
+Required for safe failover when the active validator is still in gossip. Without these, failover only proceeds when that identity has left gossip (confirmed over several polls).
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
@@ -61,7 +61,7 @@ Required for safe failover when the active validator is still alive. Without the
 | `--remote-ledger` | For Agave fencing | - | Ledger path on active node |
 | `--remote-fdctl-config` | For FD fencing | - | fdctl config path on active node |
 | `--ssh-timeout` | No | `5` | SSH connection timeout in seconds |
-| `--ssh-retries` | No | `2` | SSH retries when active node is alive |
+| `--ssh-retries` | No | `2` | Extra SSH attempts when active identity is still in gossip (5s pause + gossip re-poll between retries) |
 
 Fencing is considered fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` or `remote-fdctl-config`) are all set.
 
@@ -152,6 +152,25 @@ The client runs on both **active** and **standby** validator nodes, automaticall
    - Monitors vote latency threshold (if `--max-vote-latency` is set)
    - Issue detected → retries `retry-count` times (1s apart) → triggers failover
 
+At startup, the tool resolves the **active validator identity** from the vote account (`nodePubkey` in `getVoteAccounts`) and finds that pubkey in `getClusterNodes` (for SSH auto-detection and fencing). That identity is what Phase 1 gossip polls look for during failover — it is not refreshed on each trigger.
+
+### Vote latency failover path
+
+When `--max-vote-latency` is set and `slotsBehind` (current slot − last vote, from batched `getVoteAccounts` + `getSlot` at `confirmed`) exceeds the limit:
+
+1. **Warning** on the first offending 1s tick, then **`checkLatencyWithRetries`**: up to `--retry-count` attempts (default 3), 1s apart.
+   - If any successful read shows latency back within the limit → **no failover**, monitoring continues.
+   - If all attempts are RPC errors → **no failover**.
+   - If at least one successful read is still over the limit (and none recovered) → **`triggerFailover`**.
+
+2. **Pre-failover hook** (optional): non-zero exit **aborts** (no latency re-check here).
+
+3. **Phase 1 — Gossip + SSH fencing** (see below): not a repeat of the latency math.
+
+4. **Phase 2**: local `set-identity`, then **`getIdentity`** RPC verification.
+
+Delinquency on the same 1s tick is handled first and uses the same retry pattern before failover.
+
 ### Failover Process (Two-Phase with STONITH)
 
 When failover is triggered:
@@ -159,12 +178,15 @@ When failover is triggered:
 1. **Pre-failover hook** (if configured): Runs custom command. Non-zero exit **aborts** the failover.
 
 2. **Phase 1 — Fence the active node (STONITH)**:
-   - Probe active node's TPU port to determine if it's alive
-   - If **dead** (TPU unreachable): Safe to proceed. Best-effort SSH fencing attempted anyway.
-   - If **alive** (TPU reachable): SSH fencing is **required**:
-     - SSH into active node and run `set-identity` to switch it to the unstaked keypair
-     - Copy tower file from active node to preserve vote history
-     - If SSH fencing fails → failover is **aborted** (prevents double-signing)
+   - Poll local RPC **`getClusterNodes`** **5 times**, **1 second apart**, for the vote account’s **`nodePubkey`** (staked validator identity saved at startup as `ActiveNodePubkey`)
+   - **Still in gossip** if that pubkey appears on **any** successful poll → treat active as running → **SSH fencing required** (if SSH fencing is not configured → failover **aborted**)
+   - **Left gossip** if absent on **every** successful poll → safe to proceed; best-effort SSH `set-identity` to unstaked key + optional tower copy if SSH is configured anyway
+   - If **all** gossip polls fail (RPC errors) → failover **aborted** (cannot confirm it is safe)
+   - When SSH is required: `1 + --ssh-retries` attempts (default 3 total); **5s** between retries, then **another 5×1s gossip poll** — if the identity left gossip during the wait, proceed without further SSH
+   - On successful SSH: remote `set-identity` to unstaked keypair; copy Agave **tower file** when both ledger paths are set (copy failure is non-fatal)
+   - If still in gossip and all SSH attempts fail → failover **aborted** (prevents double-signing)
+
+   Liveness is based on **gossip visibility**, not a TCP probe to the TPU address. TPU/gossip contact addresses from startup are still used for SSH target auto-detection (`user@host` from gossip IP).
 
 3. **Phase 2 — Switch local identity**:
    - Execute `set-identity` on the local node to assume the staked keypair
@@ -188,10 +210,10 @@ The tool performs these checks before starting monitoring:
 | **Gossip** | Node appears in cluster gossip, TCP port reachable |
 | **PATH** | Required CLI tool (`agave-validator` or `fdctl`) is in PATH |
 | **Config/Ledger** | Configured path exists on disk |
-| **Keypair** | Identity keypair file is valid |
-| **Identity** | Keypair matches expected role (staked/unstaked for mode) |
-| **Voting** | Vote account exists and is queryable |
-| **Mode** | ACTIVE/STANDBY detection is consistent |
+| **Keypair** | Identity keypair readable; pubkey matches vote account `nodePubkey` |
+| **Vote** | Vote account queryable via RPC |
+| **Standby** | Local identity ≠ vote `nodePubkey` (tool must run on hot spare) |
+| **Active** | Staked identity found in `getClusterNodes` (TPU/`tpuQuic` used for SSH IP hint) |
 | **SSH** | SSH connectivity and remote binary available (if fencing configured) |
 
 All failed checks are printed before exit so you can fix everything in one pass.

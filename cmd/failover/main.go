@@ -510,6 +510,25 @@ func main() {
 			failedCheck = &sshCheck
 		}
 		checks = append(checks, sshCheck)
+
+		// Tower file copy (SCP) requires --ledger and --remote-ledger when SSH fencing is used
+		towerPassed := config.LedgerPath != "" && config.RemoteLedgerPath != ""
+		towerErrMsg := ""
+		if !towerPassed {
+			switch {
+			case config.LedgerPath == "" && config.RemoteLedgerPath == "":
+				towerErrMsg = "set --ledger and --remote-ledger so tower-1_9-<identity>.bin can be copied on failover"
+			case config.LedgerPath == "":
+				towerErrMsg = "set --ledger (local ledger dir) for tower file copy after SSH fence"
+			default:
+				towerErrMsg = "set --remote-ledger for tower file copy from the active node"
+			}
+		}
+		towerCheck := checkResult{name: "Tower", passed: towerPassed, errMsg: towerErrMsg}
+		if !towerPassed && failedCheck == nil {
+			failedCheck = &towerCheck
+		}
+		checks = append(checks, towerCheck)
 	}
 
 	// === Print the table ===

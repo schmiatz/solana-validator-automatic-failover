@@ -215,6 +215,7 @@ The tool performs these checks before starting monitoring:
 | **Standby** | Local identity ≠ vote `nodePubkey` (tool must run on hot spare) |
 | **Active** | Staked identity found in `getClusterNodes` (TPU/`tpuQuic` used for SSH IP hint) |
 | **SSH** | SSH connectivity and remote binary available (if fencing configured) |
+| **Tower** | `--ledger` and `--remote-ledger` set so `tower-1_9-<identity>.bin` can be SCP'd on failover (if fencing configured) |
 
 All failed checks are printed before exit so you can fix everything in one pass.
 
@@ -240,7 +241,7 @@ All failed checks are printed before exit so you can fix everything in one pass.
 ║  Hooks              Pre + Post                                               ║
 ║  Logfile            /home/sol/failover.log                                   ║
 ║  Startup checks     Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
-║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✓                  ║
+║                     Keypair ✓  Vote ✓  Standby ✓  Active ✓  SSH ✓  Tower ✓     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 

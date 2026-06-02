@@ -599,7 +599,7 @@ func main() {
 	}
 	for i, line := range checksLines {
 		if i == 0 {
-			printLine(tableRow("Checks", line))
+			printLine(tableRow("Startup checks", line))
 		} else {
 			printLine(fmt.Sprintf("║%-78s║", "                    "+line))
 		}

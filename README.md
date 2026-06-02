@@ -239,7 +239,7 @@ All failed checks are printed before exit so you can fix everything in one pass.
 ║  Alerting           PagerDuty                                                ║
 ║  Hooks              Pre + Post                                               ║
 ║  Logfile            /home/sol/failover.log                                   ║
-║  Checks             Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
+║  Startup checks     Health ✓  Gossip ✓  PATH ✓  Ledger ✓                     ║
 ║                     Keypair ✓  Identity ✓  Voting ✓  Mode ✓                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```

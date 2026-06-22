@@ -1044,7 +1044,7 @@ func remoteBinaryCheckCmd(config *Config) (label, checkCmd string) {
 		if config.RemoteFdctlBin != "" {
 			return config.RemoteFdctlBin, "test -x " + shellQuoteDouble(config.RemoteFdctlBin)
 		}
-		return "fdctl", "command -v fdctl"
+		return "fdctl", discoverRemoteFdctlScript
 	}
 	if config.RemoteAgaveBin != "" {
 		return config.RemoteAgaveBin, "test -x " + shellQuoteDouble(config.RemoteAgaveBin)
@@ -1066,62 +1066,48 @@ func remoteBinaryCheckMessage(config *Config, remoteLabel, whichOut string) stri
 	}
 	// Only hint client-type mismatch when the other client's binary is present.
 	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
-		if altOut, altErr := sshExec(config, "command -v agave-validator"); altErr == nil {
-			if _, fdErr := sshExec(config, "command -v fdctl"); fdErr != nil {
-				msg += fmt.Sprintf(" (agave-validator is at %s — if the active node is Agave, use remote-ledger instead of remote-fdctl-config)",
-					strings.TrimSpace(altOut))
+		if altOut, altErr := sshExec(config, "command -v agave-validator 2>/dev/null"); altErr == nil {
+			if _, fdErr := sshExec(config, discoverRemoteFdctlScript); fdErr != nil {
+				if p := parseRemoteExecutablePath(altOut); p != "" {
+					msg += fmt.Sprintf(" (agave-validator is at %s — if the active node is Agave, use remote-ledger instead of remote-fdctl-config)", p)
+				}
 			}
 		}
 	}
 	return msg
 }
 
-// resolveRemoteBinaries probes the active node over SSH for fdctl/agave-validator when
-// only a config path was given but the executable path was not (common with Firedancer:
-// PATH is set in ~/.bashrc which non-interactive shells skip on Ubuntu).
-func resolveRemoteBinaries(config *Config) {
-	if !config.FencingConfigured {
-		return
-	}
-	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
-		if out, err := sshExec(config, "command -v fdctl"); err == nil {
-			if p := strings.TrimSpace(out); p != "" {
-				config.RemoteFdctlBin = p
-				log.Printf("Detected remote fdctl via PATH: %s", p)
-				return
-			}
+// discoverRemoteFdctlScript finds fdctl by probing common Firedancer install paths (no PATH needed).
+const discoverRemoteFdctlScript = `for d in "${HOME}/firedancer/build/native/gcc/bin" "${HOME}/Firedancer/build/native/gcc/bin"; do if test -x "$d/fdctl"; then echo "$d/fdctl"; exit 0; fi; done; exit 1`
+
+// parseRemoteExecutablePath returns the first absolute-path line from SSH output, ignoring bash noise.
+func parseRemoteExecutablePath(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "bash:") {
+			continue
 		}
-		for _, rel := range []string{
-			"firedancer/build/native/gcc/bin/fdctl",
-			"Firedancer/build/native/gcc/bin/fdctl",
-		} {
-			probe := fmt.Sprintf(`if test -x "${HOME}/%[1]s"; then echo "${HOME}/%[1]s"; fi`, rel)
-			out, err := sshExec(config, probe)
-			if err != nil {
-				continue
-			}
-			if p := strings.TrimSpace(out); p != "" {
-				config.RemoteFdctlBin = p
-				log.Printf("Auto-detected remote fdctl: %s", p)
-				return
-			}
+		if strings.HasPrefix(line, "/") && !strings.Contains(line, " ") {
+			return line
 		}
 	}
-	if config.RemoteFdctlConfig == "" && config.RemoteLedgerPath != "" && config.RemoteAgaveBin == "" {
-		if out, err := sshExec(config, "command -v agave-validator"); err == nil {
-			if p := strings.TrimSpace(out); p != "" {
-				config.RemoteAgaveBin = p
-				log.Printf("Detected remote agave-validator via PATH: %s", p)
-			}
-		}
-	}
+	return ""
 }
 
-// sshExec runs a command on the remote host via an interactive login shell (-i -l) so
-// ~/.bashrc runs fully (Ubuntu skips .bashrc for plain bash -l -c non-interactive SSH).
-func sshExec(config *Config, command string) (string, error) {
-	args := sshOptions(config, "-p")
-	remoteCmd := "bash -i -l -c " + shellQuote(command)
+// discoverRemoteFdctl returns the absolute path to fdctl on the active node, or "".
+func discoverRemoteFdctl(config *Config) string {
+	if out, err := sshExec(config, discoverRemoteFdctlScript); err == nil {
+		if p := parseRemoteExecutablePath(out); p != "" {
+			return p
+		}
+	}
+	if out, err := sshExec(config, "command -v fdctl 2>/dev/null"); err == nil {
+		if p := parseRemoteExecutablePath(out); p != "" {
+			return p
+		}
+	}
+	return ""
+}
 	args = append(args, config.RemoteSSH, remoteCmd)
 
 	cmd := exec.Command("ssh", args...)

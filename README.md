@@ -67,7 +67,7 @@ Required for safe failover when the active validator is still in gossip. Without
 
 Fencing is considered fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` or `remote-fdctl-config`) are all set.
 
-Remote SSH commands use **`bash -i -l -c`** (interactive login) so **`~/.bashrc`** runs fully. Plain **`bash -l -c`** over SSH is non-interactive on Ubuntu, so `.bashrc` exits early and **`fdctl`** is missing from PATH even when an interactive SSH session has it. The tool also auto-probes **`~/firedancer/build/native/gcc/bin/fdctl`**. If discovery still fails, set **`remote-fdctl-bin`** to the full executable path.
+Remote SSH commands use **`bash -l -c`** (non-interactive). Firedancer **`fdctl`** is auto-discovered by probing **`~/firedancer/build/native/gcc/bin/fdctl`** (no PATH / `.bashrc` required). Set **`remote-fdctl-bin`** to override.
 
 #### Hooks
 

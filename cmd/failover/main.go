@@ -483,10 +483,11 @@ func main() {
 		if err != nil {
 			sshErrMsg = fmt.Sprintf("SSH connection to %s failed: %v", config.RemoteSSH, err)
 		} else {
-			// SSH works, now check if the required binary exists on remote
-			_, err := sshExec(&config, "which "+remoteCmd)
+			// SSH works, now check if the required binary exists on remote (login PATH)
+			whichOut, err := sshExec(&config, "command -v "+remoteCmd)
 			if err != nil {
-				sshErrMsg = fmt.Sprintf("'%s' not found in PATH on remote node %s", remoteCmd, config.RemoteSSH)
+				sshErrMsg = fmt.Sprintf("'%s' not found in login PATH on remote %s: %s",
+					remoteCmd, config.RemoteSSH, strings.TrimSpace(whichOut))
 			} else {
 				// Verify remote-identity-keypair is NOT the active voting identity
 				// Read the keypair file on the remote node and extract the pubkey
@@ -1012,14 +1013,21 @@ func sshOptions(config *Config, portFlag string) []string {
 	return args
 }
 
-// sshExec runs a command on the remote host via SSH
+// sshExec runs a command on the remote host via SSH using a login shell so PATH
+// matches an interactive session (e.g. fdctl in ~/.profile).
 func sshExec(config *Config, command string) (string, error) {
 	args := sshOptions(config, "-p")
-	args = append(args, config.RemoteSSH, command)
+	remoteCmd := "bash -l -c " + shellQuote(command)
+	args = append(args, config.RemoteSSH, remoteCmd)
 
 	cmd := exec.Command("ssh", args...)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+// shellQuote wraps s in single quotes for safe use inside bash -c.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // copyTowerFile copies the tower file from the active node to the local node via SCP.

@@ -65,6 +65,8 @@ Required for safe failover when the active validator is still in gossip. Without
 
 Fencing is considered fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` or `remote-fdctl-config`) are all set.
 
+Remote SSH commands (connectivity check, `command -v`, fencing `set-identity`) run via **`bash -l -c`** so the remote **login PATH** applies — the same as an interactive SSH session (e.g. `fdctl` under `~/firedancer/build/.../bin` from `.profile`).
+
 #### Hooks
 
 Bash commands executed via `bash -l -c` (login shell — sources `.profile`, gets full PATH under systemd).

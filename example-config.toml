@@ -48,6 +48,13 @@ remote-ledger = "/home/sol/ledger"
 # Optional (required for Frankendancer fencing). fdctl config path on the active node.
 # remote-fdctl-config = "/home/sol/fdctl-config.toml"
 
+# Optional. Full path to fdctl on the active node when it is not on PATH over non-interactive SSH
+# (common when PATH is set only in ~/.bashrc). Example:
+# remote-fdctl-bin = "/home/sfadmin/firedancer/build/native/gcc/bin/fdctl"
+
+# Optional. Full path to agave-validator on the active node (same SSH PATH issue as fdctl).
+# remote-agave-bin = "/home/sfadmin/.local/share/solana/install/active_release/bin/agave-validator"
+
 # Optional. SSH connection timeout in seconds. Default: 5
 ssh-timeout = 5
 

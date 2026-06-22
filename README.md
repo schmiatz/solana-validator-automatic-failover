@@ -60,12 +60,14 @@ Required for safe failover when the active validator is still in gossip. Without
 | `--remote-identity-keypair` | For fencing | - | Path to unstaked keypair on active node |
 | `--remote-ledger` | For Agave fencing | - | Ledger path on active node |
 | `--remote-fdctl-config` | For FD fencing | - | fdctl config path on active node |
+| `--remote-fdctl-bin` | No | - | Full path to `fdctl` on active node if not on SSH PATH |
+| `--remote-agave-bin` | No | - | Full path to `agave-validator` on active node if not on SSH PATH |
 | `--ssh-timeout` | No | `5` | SSH connection timeout in seconds |
 | `--ssh-retries` | No | `2` | Extra SSH attempts when active identity is still in gossip (5s pause + gossip re-poll between retries) |
 
 Fencing is considered fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` or `remote-fdctl-config`) are all set.
 
-Remote SSH commands (connectivity check, `command -v`, fencing `set-identity`) run via **`bash -l -c`** so the remote **login PATH** applies — the same as an interactive SSH session (e.g. `fdctl` under `~/firedancer/build/.../bin` from `.profile`).
+Remote SSH commands (connectivity check, binary check, fencing `set-identity`) run via **`bash -l -c`** after sourcing **`~/.profile`**, **`~/.bash_profile`**, and **`~/.bashrc`**. Non-interactive SSH often skips `.bashrc`, which is where Firedancer installs usually add `fdctl` to PATH. If the check still fails, set **`remote-fdctl-bin`** (or **`remote-agave-bin`**) to the full executable path on the active node.
 
 #### Hooks
 

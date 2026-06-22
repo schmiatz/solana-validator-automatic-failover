@@ -41,6 +41,8 @@ type TOMLConfig struct {
 	RemoteIdentityKeypair string `toml:"remote-identity-keypair"`
 	RemoteLedgerPath      string `toml:"remote-ledger"`
 	RemoteFdctlConfig     string `toml:"remote-fdctl-config"`
+	RemoteFdctlBin        string `toml:"remote-fdctl-bin"`
+	RemoteAgaveBin        string `toml:"remote-agave-bin"`
 	SSHTimeout            int    `toml:"ssh-timeout"`
 	SSHRetries            int    `toml:"ssh-retries"`
 	PreFailoverHook       string `toml:"pre-failover-hook"`
@@ -81,6 +83,8 @@ func applyTOMLConfig(config *Config, t *TOMLConfig) {
 	setStr(&config.RemoteIdentityKeypair, t.RemoteIdentityKeypair)
 	setStr(&config.RemoteLedgerPath, t.RemoteLedgerPath)
 	setStr(&config.RemoteFdctlConfig, t.RemoteFdctlConfig)
+	setStr(&config.RemoteFdctlBin, t.RemoteFdctlBin)
+	setStr(&config.RemoteAgaveBin, t.RemoteAgaveBin)
 	setInt(&config.SSHTimeout, t.SSHTimeout)
 	setInt(&config.SSHRetries, t.SSHRetries)
 	setStr(&config.PreFailoverHook, t.PreFailoverHook)
@@ -109,6 +113,8 @@ type Config struct {
 	RemoteIdentityKeypair string // Path to unstaked keypair on active node
 	RemoteLedgerPath      string // Ledger path on active node
 	RemoteFdctlConfig     string // Fdctl config path on active node
+	RemoteFdctlBin        string // Full path to fdctl on active node (optional)
+	RemoteAgaveBin        string // Full path to agave-validator on active node (optional)
 	SSHTimeout            int    // SSH connection timeout in seconds
 	SSHRetries            int    // SSH retry count when active node is alive
 	FencingConfigured     bool   // Whether SSH fencing is fully configured
@@ -142,6 +148,8 @@ func main() {
 	remoteIdentityKeypair := flag.String("remote-identity-keypair", "", "Path to unstaked keypair on active node")
 	remoteLedgerPath := flag.String("remote-ledger", "", "Ledger path on active node (Agave)")
 	remoteFdctlConfig := flag.String("remote-fdctl-config", "", "fdctl config path on active node (Frankendancer)")
+	remoteFdctlBin := flag.String("remote-fdctl-bin", "", "Full path to fdctl on active node (if not on default SSH PATH)")
+	remoteAgaveBin := flag.String("remote-agave-bin", "", "Full path to agave-validator on active node (if not on default SSH PATH)")
 	sshTimeout := flag.Int("ssh-timeout", 0, "SSH connection timeout in seconds (default: 5)")
 	sshRetries := flag.Int("ssh-retries", 0, "SSH retry count when active node is alive (default: 2)")
 	preFailoverHook := flag.String("pre-failover-hook", "", "Bash command to run before failover (non-zero exit aborts failover)")
@@ -215,6 +223,12 @@ func main() {
 	}
 	if flagsSet["remote-fdctl-config"] {
 		config.RemoteFdctlConfig = *remoteFdctlConfig
+	}
+	if flagsSet["remote-fdctl-bin"] {
+		config.RemoteFdctlBin = *remoteFdctlBin
+	}
+	if flagsSet["remote-agave-bin"] {
+		config.RemoteAgaveBin = *remoteAgaveBin
 	}
 	if flagsSet["ssh-timeout"] {
 		config.SSHTimeout = *sshTimeout
@@ -468,13 +482,7 @@ func main() {
 
 	// SSH check - verify connectivity and remote binary (only if fencing is configured)
 	if config.FencingConfigured {
-		// Determine which binary is needed on the remote node
-		var remoteCmd string
-		if config.RemoteFdctlConfig != "" {
-			remoteCmd = "fdctl"
-		} else {
-			remoteCmd = "agave-validator"
-		}
+		remoteLabel, checkCmd := remoteBinaryCheckCmd(&config)
 
 		sshPassed := false
 		sshErrMsg := ""
@@ -483,10 +491,10 @@ func main() {
 		if err != nil {
 			sshErrMsg = fmt.Sprintf("SSH connection to %s failed: %v", config.RemoteSSH, err)
 		} else {
-			// SSH works, now check if the required binary exists on remote (login PATH)
-			whichOut, err := sshExec(&config, "command -v "+remoteCmd)
+			// SSH works, now check remote fencing binary (login PATH + profile, or explicit path)
+			whichOut, err := sshExec(&config, checkCmd)
 			if err != nil {
-				sshErrMsg = remoteBinaryCheckMessage(&config, remoteCmd, whichOut)
+				sshErrMsg = remoteBinaryCheckMessage(&config, remoteLabel, whichOut)
 			} else {
 				// Verify remote-identity-keypair is NOT the active voting identity
 				// Read the keypair file on the remote node and extract the pubkey
@@ -984,11 +992,11 @@ func sshSetIdentity(config *Config) (string, error) {
 	var command string
 
 	if config.RemoteFdctlConfig != "" {
-		command = fmt.Sprintf("fdctl set-identity --config %s %s --force",
-			config.RemoteFdctlConfig, config.RemoteIdentityKeypair)
+		command = fmt.Sprintf("%s set-identity --config %s %s --force",
+			remoteFdctlCommand(config), config.RemoteFdctlConfig, config.RemoteIdentityKeypair)
 	} else if config.RemoteLedgerPath != "" {
-		command = fmt.Sprintf("agave-validator --ledger %s set-identity %s",
-			config.RemoteLedgerPath, config.RemoteIdentityKeypair)
+		command = fmt.Sprintf("%s --ledger %s set-identity %s",
+			remoteAgaveCommand(config), config.RemoteLedgerPath, config.RemoteIdentityKeypair)
 	} else {
 		return "", fmt.Errorf("no remote ledger or fdctl-config configured")
 	}
@@ -1012,32 +1020,74 @@ func sshOptions(config *Config, portFlag string) []string {
 	return args
 }
 
-// remoteBinaryCheckMessage explains a failed command -v on the remote host during startup.
-func remoteBinaryCheckMessage(config *Config, remoteCmd, whichOut string) string {
-	msg := fmt.Sprintf("'%s' not found in login PATH on remote %s", remoteCmd, config.RemoteSSH)
+// remoteFdctlCommand returns the fdctl executable to run on the remote host.
+func remoteFdctlCommand(config *Config) string {
+	if config.RemoteFdctlBin != "" {
+		return config.RemoteFdctlBin
+	}
+	return "fdctl"
+}
+
+// remoteAgaveCommand returns the agave-validator executable to run on the remote host.
+func remoteAgaveCommand(config *Config) string {
+	if config.RemoteAgaveBin != "" {
+		return config.RemoteAgaveBin
+	}
+	return "agave-validator"
+}
+
+// remoteBinaryCheckCmd returns a label and shell snippet to verify the remote fencing binary exists.
+func remoteBinaryCheckCmd(config *Config) (label, checkCmd string) {
+	if config.RemoteFdctlConfig != "" {
+		if config.RemoteFdctlBin != "" {
+			return config.RemoteFdctlBin, "test -x " + shellQuoteDouble(config.RemoteFdctlBin)
+		}
+		return "fdctl", "command -v fdctl"
+	}
+	if config.RemoteAgaveBin != "" {
+		return config.RemoteAgaveBin, "test -x " + shellQuoteDouble(config.RemoteAgaveBin)
+	}
+	return "agave-validator", "command -v agave-validator"
+}
+
+// remoteBinaryCheckMessage explains a failed remote binary check during startup.
+func remoteBinaryCheckMessage(config *Config, remoteLabel, whichOut string) string {
+	msg := fmt.Sprintf("remote fencing binary %q not found on %s", remoteLabel, config.RemoteSSH)
 	if trimmed := strings.TrimSpace(whichOut); trimmed != "" {
 		msg += ": " + trimmed
 	}
-	// Common misconfiguration: remote-fdctl-config set but active node runs Agave (or vice versa).
-	if remoteCmd == "fdctl" {
+	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
+		msg += " (set remote-fdctl-bin to the full path if fdctl is only on PATH in an interactive shell, e.g. ~/firedancer/build/native/gcc/bin/fdctl)"
+	}
+	if config.RemoteFdctlConfig == "" && config.RemoteLedgerPath != "" && config.RemoteAgaveBin == "" {
+		msg += " (set remote-agave-bin to the full path if agave-validator is not on default SSH PATH)"
+	}
+	// Only hint client-type mismatch when the other client's binary is present.
+	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
 		if altOut, altErr := sshExec(config, "command -v agave-validator"); altErr == nil {
-			msg += fmt.Sprintf(" (agave-validator is at %s — remove remote-fdctl-config and set remote-ledger for Agave fencing)",
-				strings.TrimSpace(altOut))
-		}
-	} else if remoteCmd == "agave-validator" {
-		if altOut, altErr := sshExec(config, "command -v fdctl"); altErr == nil {
-			msg += fmt.Sprintf(" (fdctl is at %s — use remote-fdctl-config instead of remote-ledger for Frankendancer fencing)",
-				strings.TrimSpace(altOut))
+			if _, fdErr := sshExec(config, "command -v fdctl"); fdErr != nil {
+				msg += fmt.Sprintf(" (agave-validator is at %s — if the active node is Agave, use remote-ledger instead of remote-fdctl-config)",
+					strings.TrimSpace(altOut))
+			}
 		}
 	}
 	return msg
 }
 
+// sshRemoteScript wraps command so non-interactive SSH loads the same PATH as an interactive login
+// (Firedancer often adds fdctl in ~/.bashrc, which bash -l -c alone does not source on Ubuntu).
+func sshRemoteScript(command string) string {
+	return `source "${HOME}/.profile" 2>/dev/null || true; ` +
+		`source "${HOME}/.bash_profile" 2>/dev/null || true; ` +
+		`source "${HOME}/.bashrc" 2>/dev/null || true; ` +
+		command
+}
+
 // sshExec runs a command on the remote host via SSH using a login shell so PATH
-// matches an interactive session (e.g. fdctl in ~/.profile).
+// matches an interactive session (e.g. fdctl in ~/.profile or ~/.bashrc).
 func sshExec(config *Config, command string) (string, error) {
 	args := sshOptions(config, "-p")
-	remoteCmd := "bash -l -c " + shellQuote(command)
+	remoteCmd := "bash -l -c " + shellQuote(sshRemoteScript(command))
 	args = append(args, config.RemoteSSH, remoteCmd)
 
 	cmd := exec.Command("ssh", args...)
@@ -1048,6 +1098,13 @@ func sshExec(config *Config, command string) (string, error) {
 // shellQuote wraps s in single quotes for safe use inside bash -c.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shellQuoteDouble wraps s in double quotes for use inside sshRemoteScript (outer single quotes).
+func shellQuoteDouble(s string) string {
+	escaped := strings.ReplaceAll(s, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
 }
 
 // copyTowerFile copies the tower file from the active node to the local node via SCP.

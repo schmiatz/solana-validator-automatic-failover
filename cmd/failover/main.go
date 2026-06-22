@@ -486,8 +486,7 @@ func main() {
 			// SSH works, now check if the required binary exists on remote (login PATH)
 			whichOut, err := sshExec(&config, "command -v "+remoteCmd)
 			if err != nil {
-				sshErrMsg = fmt.Sprintf("'%s' not found in login PATH on remote %s: %s",
-					remoteCmd, config.RemoteSSH, strings.TrimSpace(whichOut))
+				sshErrMsg = remoteBinaryCheckMessage(&config, remoteCmd, whichOut)
 			} else {
 				// Verify remote-identity-keypair is NOT the active voting identity
 				// Read the keypair file on the remote node and extract the pubkey
@@ -1011,6 +1010,27 @@ func sshOptions(config *Config, portFlag string) []string {
 		args = append(args, "-i", config.SSHKey)
 	}
 	return args
+}
+
+// remoteBinaryCheckMessage explains a failed command -v on the remote host during startup.
+func remoteBinaryCheckMessage(config *Config, remoteCmd, whichOut string) string {
+	msg := fmt.Sprintf("'%s' not found in login PATH on remote %s", remoteCmd, config.RemoteSSH)
+	if trimmed := strings.TrimSpace(whichOut); trimmed != "" {
+		msg += ": " + trimmed
+	}
+	// Common misconfiguration: remote-fdctl-config set but active node runs Agave (or vice versa).
+	if remoteCmd == "fdctl" {
+		if altOut, altErr := sshExec(config, "command -v agave-validator"); altErr == nil {
+			msg += fmt.Sprintf(" (agave-validator is at %s — remove remote-fdctl-config and set remote-ledger for Agave fencing)",
+				strings.TrimSpace(altOut))
+		}
+	} else if remoteCmd == "agave-validator" {
+		if altOut, altErr := sshExec(config, "command -v fdctl"); altErr == nil {
+			msg += fmt.Sprintf(" (fdctl is at %s — use remote-fdctl-config instead of remote-ledger for Frankendancer fencing)",
+				strings.TrimSpace(altOut))
+		}
+	}
+	return msg
 }
 
 // sshExec runs a command on the remote host via SSH using a login shell so PATH

@@ -1108,6 +1108,34 @@ func discoverRemoteFdctl(config *Config) string {
 	}
 	return ""
 }
+
+// resolveRemoteBinaries probes the active node over SSH for fdctl/agave-validator when
+// only a config path was given but the executable path was not.
+func resolveRemoteBinaries(config *Config) {
+	if !config.FencingConfigured {
+		return
+	}
+	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
+		if p := discoverRemoteFdctl(config); p != "" {
+			config.RemoteFdctlBin = p
+			log.Printf("Auto-detected remote fdctl: %s", p)
+		}
+	}
+	if config.RemoteFdctlConfig == "" && config.RemoteLedgerPath != "" && config.RemoteAgaveBin == "" {
+		if out, err := sshExec(config, "command -v agave-validator 2>/dev/null"); err == nil {
+			if p := parseRemoteExecutablePath(out); p != "" {
+				config.RemoteAgaveBin = p
+				log.Printf("Detected remote agave-validator: %s", p)
+			}
+		}
+	}
+}
+
+// sshExec runs a command on the remote host via a non-interactive login shell.
+// Do not use bash -i over SSH without a TTY — it writes job-control errors to stdout.
+func sshExec(config *Config, command string) (string, error) {
+	args := sshOptions(config, "-p")
+	remoteCmd := "bash -l -c " + shellQuote(command)
 	args = append(args, config.RemoteSSH, remoteCmd)
 
 	cmd := exec.Command("ssh", args...)
@@ -1120,7 +1148,7 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// shellQuoteDouble wraps s in double quotes for use inside sshRemoteScript (outer single quotes).
+// shellQuoteDouble wraps s in double quotes for use inside remote shell snippets.
 func shellQuoteDouble(s string) string {
 	escaped := strings.ReplaceAll(s, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)

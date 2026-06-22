@@ -480,6 +480,8 @@ func main() {
 	config.FencingConfigured = config.RemoteSSH != "" && config.RemoteIdentityKeypair != "" &&
 		(config.RemoteLedgerPath != "" || config.RemoteFdctlConfig != "")
 
+	resolveRemoteBinaries(&config)
+
 	// SSH check - verify connectivity and remote binary (only if fencing is configured)
 	if config.FencingConfigured {
 		remoteLabel, checkCmd := remoteBinaryCheckCmd(&config)
@@ -1057,7 +1059,7 @@ func remoteBinaryCheckMessage(config *Config, remoteLabel, whichOut string) stri
 		msg += ": " + trimmed
 	}
 	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
-		msg += " (set remote-fdctl-bin to the full path if fdctl is only on PATH in an interactive shell, e.g. ~/firedancer/build/native/gcc/bin/fdctl)"
+		msg += " (set remote-fdctl-bin to the full path, e.g. /home/sfadmin/firedancer/build/native/gcc/bin/fdctl — Ubuntu .bashrc skips non-interactive SSH)"
 	}
 	if config.RemoteFdctlConfig == "" && config.RemoteLedgerPath != "" && config.RemoteAgaveBin == "" {
 		msg += " (set remote-agave-bin to the full path if agave-validator is not on default SSH PATH)"
@@ -1074,20 +1076,52 @@ func remoteBinaryCheckMessage(config *Config, remoteLabel, whichOut string) stri
 	return msg
 }
 
-// sshRemoteScript wraps command so non-interactive SSH loads the same PATH as an interactive login
-// (Firedancer often adds fdctl in ~/.bashrc, which bash -l -c alone does not source on Ubuntu).
-func sshRemoteScript(command string) string {
-	return `source "${HOME}/.profile" 2>/dev/null || true; ` +
-		`source "${HOME}/.bash_profile" 2>/dev/null || true; ` +
-		`source "${HOME}/.bashrc" 2>/dev/null || true; ` +
-		command
+// resolveRemoteBinaries probes the active node over SSH for fdctl/agave-validator when
+// only a config path was given but the executable path was not (common with Firedancer:
+// PATH is set in ~/.bashrc which non-interactive shells skip on Ubuntu).
+func resolveRemoteBinaries(config *Config) {
+	if !config.FencingConfigured {
+		return
+	}
+	if config.RemoteFdctlConfig != "" && config.RemoteFdctlBin == "" {
+		if out, err := sshExec(config, "command -v fdctl"); err == nil {
+			if p := strings.TrimSpace(out); p != "" {
+				config.RemoteFdctlBin = p
+				log.Printf("Detected remote fdctl via PATH: %s", p)
+				return
+			}
+		}
+		for _, rel := range []string{
+			"firedancer/build/native/gcc/bin/fdctl",
+			"Firedancer/build/native/gcc/bin/fdctl",
+		} {
+			probe := fmt.Sprintf(`if test -x "${HOME}/%[1]s"; then echo "${HOME}/%[1]s"; fi`, rel)
+			out, err := sshExec(config, probe)
+			if err != nil {
+				continue
+			}
+			if p := strings.TrimSpace(out); p != "" {
+				config.RemoteFdctlBin = p
+				log.Printf("Auto-detected remote fdctl: %s", p)
+				return
+			}
+		}
+	}
+	if config.RemoteFdctlConfig == "" && config.RemoteLedgerPath != "" && config.RemoteAgaveBin == "" {
+		if out, err := sshExec(config, "command -v agave-validator"); err == nil {
+			if p := strings.TrimSpace(out); p != "" {
+				config.RemoteAgaveBin = p
+				log.Printf("Detected remote agave-validator via PATH: %s", p)
+			}
+		}
+	}
 }
 
-// sshExec runs a command on the remote host via SSH using a login shell so PATH
-// matches an interactive session (e.g. fdctl in ~/.profile or ~/.bashrc).
+// sshExec runs a command on the remote host via an interactive login shell (-i -l) so
+// ~/.bashrc runs fully (Ubuntu skips .bashrc for plain bash -l -c non-interactive SSH).
 func sshExec(config *Config, command string) (string, error) {
 	args := sshOptions(config, "-p")
-	remoteCmd := "bash -l -c " + shellQuote(sshRemoteScript(command))
+	remoteCmd := "bash -i -l -c " + shellQuote(command)
 	args = append(args, config.RemoteSSH, remoteCmd)
 
 	cmd := exec.Command("ssh", args...)

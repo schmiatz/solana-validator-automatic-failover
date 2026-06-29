@@ -13,12 +13,6 @@ import (
 const (
 	// Default interval for health check retries when node is unhealthy
 	defaultCheckInterval = 3 * time.Second
-
-	// GossipPresenceProbeAttempts is how many getClusterNodes polls to run when checking
-	// whether the active validator identity has left gossip (1s apart).
-	GossipPresenceProbeAttempts = 5
-	// GossipPresenceProbeInterval is the delay between gossip presence polls.
-	GossipPresenceProbeInterval = 1 * time.Second
 )
 
 // Checker monitors node health
@@ -115,53 +109,6 @@ func (c *Checker) Check(votePubkey string) (*CheckResult, error) {
 	result.Gossip = c.checkGossipStatus(voteInfo.NodePubkey)
 
 	return result, nil
-}
-
-// IsNodeInGossip reports whether nodePubkey appears in getClusterNodes.
-func (c *Checker) IsNodeInGossip(nodePubkey string) (bool, error) {
-	nodes, err := c.client.GetClusterNodes()
-	if err != nil {
-		return false, err
-	}
-	for _, node := range nodes {
-		if node.Pubkey == nodePubkey {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// ProbeNodeInGossipWithRetries polls getClusterNodes up to maxAttempts times (interval apart).
-// Returns true if the node is listed on any successful attempt (still visible in gossip).
-// Returns false only if every successful attempt shows the node absent. If all attempts fail
-// to fetch gossip, returns an error.
-func (c *Checker) ProbeNodeInGossipWithRetries(nodePubkey string, maxAttempts int, interval time.Duration) (bool, error) {
-	if maxAttempts < 1 {
-		maxAttempts = 1
-	}
-	var lastErr error
-	hadSuccessfulRead := false
-
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		found, err := c.IsNodeInGossip(nodePubkey)
-		if err != nil {
-			lastErr = err
-			log.Printf("Gossip probe attempt %d/%d failed: %v", attempt, maxAttempts, err)
-		} else {
-			hadSuccessfulRead = true
-			if found {
-				return true, nil
-			}
-		}
-		if attempt < maxAttempts {
-			time.Sleep(interval)
-		}
-	}
-
-	if !hadSuccessfulRead && lastErr != nil {
-		return false, fmt.Errorf("gossip probe failed after %d attempts: %w", maxAttempts, lastErr)
-	}
-	return false, nil
 }
 
 // checkGossipStatus checks if a node is visible in gossip and if its gossip port is reachable

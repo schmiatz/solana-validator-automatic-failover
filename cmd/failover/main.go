@@ -637,7 +637,7 @@ func main() {
 
 	// Print fencing warning if not configured
 	if !config.FencingConfigured {
-		log.Println("WARNING: SSH fencing is not fully configured. Failover will only proceed when the active validator identity is no longer visible in gossip.")
+		log.Println("WARNING: SSH fencing is not fully configured. Failover will only proceed when active node TPU is unreachable.")
 		log.Println("  Configure --remote-ssh, --remote-identity-keypair, and --remote-ledger/--remote-fdctl-config for full fencing support.")
 	}
 
@@ -898,25 +898,29 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 	}
 }
 
+// probeTPU checks if the active node's TPU port is reachable via TCP
+func probeTPU(address string) bool {
+	if address == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // fenceActiveNode attempts to fence the active node before failover.
 // Returns (true, nil) if safe to proceed with failover.
 // Returns (false, error) if fencing failed and failover must be aborted.
-func fenceActiveNode(config *Config, checker *health.Checker) (bool, error) {
-	log.Printf("Phase 1: Checking if active identity %s is still in gossip (%d polls, %v apart)...",
-		config.ActiveNodePubkey, health.GossipPresenceProbeAttempts, health.GossipPresenceProbeInterval)
+func fenceActiveNode(config *Config) (bool, error) {
+	log.Println("Phase 1: Checking active node liveness via TPU port...")
 
-	alive, err := checker.ProbeNodeInGossipWithRetries(
-		config.ActiveNodePubkey,
-		health.GossipPresenceProbeAttempts,
-		health.GossipPresenceProbeInterval,
-	)
-	if err != nil {
-		return false, fmt.Errorf("cannot determine active node gossip presence: %w", err)
-	}
+	alive := probeTPU(config.ActiveNodeTPU)
 
 	if !alive {
-		log.Printf("Active identity %s not in gossip after %d checks — validator appears to be down",
-			config.ActiveNodePubkey, health.GossipPresenceProbeAttempts)
+		log.Printf("Active node TPU (%s) is UNREACHABLE - validator appears to be down", config.ActiveNodeTPU)
 
 		// Best-effort: try SSH fencing anyway
 		if config.FencingConfigured {
@@ -937,12 +941,12 @@ func fenceActiveNode(config *Config, checker *health.Checker) (bool, error) {
 		return true, nil
 	}
 
-	// Validator is still in gossip - must fence via SSH
-	log.Printf("Active identity %s still in gossip — validator appears to be running", config.ActiveNodePubkey)
+	// Validator is ALIVE - must fence via SSH
+	log.Printf("Active node TPU (%s) is REACHABLE - validator is still running!", config.ActiveNodeTPU)
 	log.Println("SSH fencing is REQUIRED before failover can proceed")
 
 	if !config.FencingConfigured {
-		return false, fmt.Errorf("active validator still in gossip (%s) but SSH fencing is not configured", config.ActiveNodePubkey)
+		return false, fmt.Errorf("active validator is alive (TPU reachable at %s) but SSH fencing is not configured", config.ActiveNodeTPU)
 	}
 
 	// Try SSH fencing with retries
@@ -952,17 +956,9 @@ func fenceActiveNode(config *Config, checker *health.Checker) (bool, error) {
 			log.Printf("Waiting 5 seconds before SSH retry %d/%d...", attempt, totalAttempts)
 			time.Sleep(5 * time.Second)
 
-			// Re-check gossip — node may have left gossip during the wait
-			stillAlive, err := checker.ProbeNodeInGossipWithRetries(
-				config.ActiveNodePubkey,
-				health.GossipPresenceProbeAttempts,
-				health.GossipPresenceProbeInterval,
-			)
-			if err != nil {
-				log.Printf("Gossip re-check during SSH retry failed: %v", err)
-			} else if !stillAlive {
-				log.Printf("Active identity %s left gossip during retry wait — safe to proceed",
-					config.ActiveNodePubkey)
+			// Re-check TPU - maybe node went down during the wait
+			if !probeTPU(config.ActiveNodeTPU) {
+				log.Println("Active node TPU became unreachable during retry wait - safe to proceed")
 				return true, nil
 			}
 		}
@@ -985,8 +981,7 @@ func fenceActiveNode(config *Config, checker *health.Checker) (bool, error) {
 	}
 
 	// All retries exhausted - unsafe to proceed
-	return false, fmt.Errorf("active validator still in gossip (%s) but all %d SSH fencing attempts failed - manual intervention required",
-		config.ActiveNodePubkey, totalAttempts)
+	return false, fmt.Errorf("active validator is alive (TPU reachable) but all %d SSH fencing attempts failed - manual intervention required", totalAttempts)
 }
 
 // sshSetIdentity switches the active node's identity to the unstaked key via SSH
@@ -1216,7 +1211,7 @@ func triggerFailover(reason string, config *Config, checker *health.Checker) {
 	}
 
 	// Phase 1: Fence the active node
-	fenced, err := fenceActiveNode(config, checker)
+	fenced, err := fenceActiveNode(config)
 	if !fenced {
 		log.Printf("=== FAILOVER ABORTED ===")
 		log.Printf("Cannot safely fence active node: %v", err)

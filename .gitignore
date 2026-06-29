@@ -5,6 +5,9 @@ bin/
 *.so
 *.dylib
 
+# config
+config.toml
+
 # Shell scripts
 *.sh
 

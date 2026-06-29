@@ -2,34 +2,25 @@
 #
 # CLI flags override TOML values.
 #
-# This file has three main areas:
-#   1. Monitoring      — what to watch and when to trigger
-#   2. Local host      — the STANDBY machine where this tool runs
-#   3. Remote host     — the ACTIVE validator (SSH fencing / STONITH)
+# How to use this file:
+#   1. Fill in MONITORING (always)
+#   2. Uncomment ONE local block  — how the STANDBY runs (Agave or Frankendancer)
+#   3. Fill in REMOTE SSH + identity-keypair (always when using fencing)
+#   4. Uncomment ONE remote block — how the ACTIVE validator runs (Agave or Frankendancer)
 #
-# Client-specific fields (Agave vs Frankendancer) are split in sections 2 and 3.
-# Uncomment exactly ONE local client block and match the remote block to how the
-# active validator is run.
-#
-# Fencing is "fully configured" when ALL of these are set:
-#   remote-ssh + remote-identity-keypair + (remote-ledger OR remote-fdctl-config)
-# Without fencing, failover only proceeds when the active node's TPU is unreachable.
+# Fencing is fully configured when: remote-ssh + remote-identity-keypair +
+#   (remote-ledger for Agave active  OR  remote-fdctl-config for FD active).
+# Tower check (when fencing is on) always needs ledger + remote-ledger on both sides.
+# Without fencing, failover only proceeds when the active TPU is unreachable.
 
 
 # =============================================================================
 # 1. MONITORING
 # =============================================================================
 
-# Required. Vote account public key to monitor.
 vote-pubkey = "YourVoteAccountPubkeyHere1111111111111111111111"
-
-# Optional. Local RPC endpoint. Default: http://127.0.0.1:8899
 rpc = "http://127.0.0.1:8899"
-
-# Optional. Max slots behind before triggering failover. Default: 0 (delinquency only).
 max-vote-latency = 0
-
-# Optional. Consecutive RPC checks before confirming failover. Default: 3 (1s apart).
 retry-count = 3
 
 
@@ -37,83 +28,67 @@ retry-count = 3
 # 2. LOCAL HOST — standby machine (this tool runs here)
 # =============================================================================
 #
-# The spare must run an UNSTAKED identity today. identity-keypair is the staked
-# key file used on failover (must match the vote account's validator identity).
+# The spare must run an UNSTAKED identity today.
+# identity-keypair = staked key file used on failover (must match vote account).
 #
-# Pick Agave OR Frankendancer — required fields differ.
+# Uncomment exactly ONE block.
 
 
-# --- Required (all setups) ---
-
-identity-keypair = "/home/sol/staked-identity.json"
-
-
-# --- Agave standby (uncomment and set ledger) ---
-
-ledger = "/home/sol/ledger"
-
-
-# --- Frankendancer standby (uncomment fdctl-config; comment out ledger above if unused) ---
+# --- Local Agave ---
 #
+# identity-keypair = "/home/sol/staked-identity.json"
+# ledger = "/home/sol/ledger"
+
+
+# --- Local Frankendancer ---
+#
+# identity-keypair = "/home/sol/staked-identity.json"
 # fdctl-config = "/home/sol/fdctl-config.toml"
-#
-# If the ACTIVE node is Agave and you use SSH fencing, also set ledger locally
-# (tower file is copied here on failover). Startup Tower check requires BOTH
-# ledger (local) and remote-ledger when fencing is configured.
+# ledger = "/home/sol/ledger"              # also set when SSH fencing is on (tower copy destination)
 
 
 # =============================================================================
 # 3. REMOTE HOST — active validator (SSH fencing / STONITH)
 # =============================================================================
 #
-# Used when the active validator is still alive (TPU reachable). The tool SSHes
-# in, switches the active node to an unstaked key, optionally copies the tower
-# file, then switches identity locally on this standby.
-#
-# remote-ssh defaults to user@gossip-ip if omitted (same user as this machine).
+# Required whenever the active validator may still be alive (TPU reachable).
+# remote-ssh can be omitted to auto-detect user@gossip-ip (same user as this machine).
 
 
-# --- SSH connection (all fenced setups) ---
-
-# remote-ssh = "sol@10.0.0.1"
-# ssh-key = "/home/sol/.ssh/id_ed25519"
+remote-ssh = "sol@10.0.0.1"
+ssh-key = "/home/sol/.ssh/id_ed25519"
 ssh-port = 22
 ssh-timeout = 5
 ssh-retries = 2
 
-# Path on the ACTIVE node to the unstaked keypair (required for fencing).
+# Unstaked keypair path on the ACTIVE node (switched to during fencing).
 remote-identity-keypair = "/home/sol/unstaked-identity.json"
 
 
-# --- Active validator runs Agave (uncomment remote-ledger) ---
-
-remote-ledger = "/home/sol/ledger"
-
-# Optional if agave-validator is not on PATH over non-interactive SSH:
-# remote-agave-bin = "/home/sol/.local/share/solana/install/active_release/bin/agave-validator"
+# --- Active Agave ---
+#
+# remote-ledger = "/home/sol/ledger"
+# remote-agave-bin = "/home/sol/.local/share/solana/install/active_release/bin/agave-validator"  # optional
 
 
-# --- Active validator runs Frankendancer (uncomment remote-fdctl-config; comment remote-ledger if unused) ---
+# --- Active Frankendancer ---
 #
 # remote-fdctl-config = "/home/sol/fdctl-config.toml"
-#
-# Optional if fdctl is not on PATH over non-interactive SSH (often set only in ~/.bashrc).
-# Auto-discovery tries ~/firedancer/build/native/gcc/bin/fdctl when this is unset.
-# remote-fdctl-bin = "/home/sfadmin/firedancer/build/native/gcc/bin/fdctl"
+# remote-ledger = "/home/sol/ledger"                                     # tower source (required for Tower check when fencing is on)
+# remote-fdctl-bin = "/home/sol/firedancer/build/native/gcc/bin/fdctl"  # optional; auto-probes ~/firedancer/.../fdctl if unset
 
 
 # =============================================================================
 # 4. HOOKS (optional)
 # =============================================================================
 #
-# Bash commands via "bash -l -c" (login shell). Environment variables:
-#   FAILOVER_REASON, FAILOVER_VOTE_PUBKEY, FAILOVER_ACTIVE_NODE, FAILOVER_ACTIVE_IP,
-#   FAILOVER_LOCAL_IDENTITY, FAILOVER_NEW_IDENTITY, FAILOVER_HOSTNAME
+# pre-failover-hook  — before Phase 1 (TPU probe / SSH fence). Non-zero exit ABORTS.
+# post-failover-hook — after successful local set-identity. Failures logged only.
 #
-# pre-failover-hook  — runs before Phase 1 (TPU probe / SSH fence). Non-zero exit ABORTS.
-# post-failover-hook — runs after successful local set-identity. Failures are logged only.
+# Env: FAILOVER_REASON, FAILOVER_VOTE_PUBKEY, FAILOVER_ACTIVE_NODE, FAILOVER_ACTIVE_IP,
+#      FAILOVER_LOCAL_IDENTITY, FAILOVER_NEW_IDENTITY, FAILOVER_HOSTNAME
 
-# pre-failover-hook = "echo 'Pre-failover: reason=$FAILOVER_REASON active=$FAILOVER_ACTIVE_NODE'"
+# pre-failover-hook = "echo 'Pre-failover: reason=$FAILOVER_REASON'"
 # post-failover-hook = "echo 'Post-failover: now running as $FAILOVER_NEW_IDENTITY'"
 
 
@@ -134,16 +109,14 @@ remote-ledger = "/home/sol/ledger"
 
 
 # =============================================================================
-# QUICK REFERENCE — minimum fields when SSH fencing is enabled
+# SETUP CHEAT SHEET (SSH fencing enabled)
 # =============================================================================
 #
-# Always: identity-keypair, remote-identity-keypair, remote-ssh (or auto from gossip)
+#  Standby      Active       Local fields                         Remote fields
+#  ─────────────────────────────────────────────────────────────────────────────
+#  Agave        Agave        identity-keypair, ledger             remote-ledger
+#  Agave        Frankendancer identity-keypair, ledger          remote-fdctl-config, remote-ledger
+#  Frankendancer Agave       identity-keypair, fdctl-config, ledger  remote-ledger
+#  Frankendancer Frankendancer identity-keypair, fdctl-config, ledger  remote-fdctl-config, remote-ledger
 #
-# Local Agave  + active Agave:  ledger, remote-ledger
-# Local Agave  + active FD:     ledger, remote-fdctl-config, remote-ledger *
-# Local FD     + active FD:     fdctl-config, remote-fdctl-config, ledger *, remote-ledger *
-# Local FD     + active Agave:  fdctl-config, ledger, remote-ledger
-#
-# * Tower startup check requires BOTH ledger and remote-ledger whenever fencing
-#   is configured (tower copy is Agave-format). Set ledger paths even on FD-only
-#   pairs if you need that check to pass.
+#  Tower copy uses Agave-format tower-1_9-<identity>.bin from remote-ledger on the active node.

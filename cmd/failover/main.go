@@ -23,6 +23,7 @@ import (
 	"github.com/mr-tron/base58"
 	"github.com/schmiatz/solana-validator-automatic-failover/internal/health"
 	"github.com/schmiatz/solana-validator-automatic-failover/internal/rpc"
+	"github.com/schmiatz/solana-validator-automatic-failover/internal/tpu"
 )
 
 // TOMLConfig maps the TOML configuration file fields.
@@ -118,7 +119,8 @@ type Config struct {
 	SSHTimeout            int    // SSH connection timeout in seconds
 	SSHRetries            int    // SSH retry count when active node is alive
 	FencingConfigured     bool   // Whether SSH fencing is fully configured
-	ActiveNodeTPU         string // TPU address of active node (IP:port)
+	ActiveNodeTpuQuic     string // tpuQuic address from gossip (QUIC probe)
+	ActiveNodeTPU         string // tpu address from gossip (UDP probe fallback)
 	ActiveNodeIP          string // IP of active node
 	ActiveNodePubkey      string // Identity pubkey of active node
 	PreFailoverHook       string // Bash command to run before failover (non-zero exit aborts)
@@ -437,25 +439,29 @@ func main() {
 	}
 	checks = append(checks, standbyCheck)
 
-	// Active node check - find active node in gossip, save TPU address
+	// Active node check - find active node in gossip, save TPU addresses
 	activePassed := false
 	activeErrMsg := "Could not find active node in gossip"
 	if votePassed && localResult.ClusterNodes != nil {
 		for _, node := range localResult.ClusterNodes {
 			if node.Pubkey == voteAccountResult.NodePubkey {
-				activePassed = true
-				tpuAddr := node.TPU
-				if tpuAddr == nil {
-					tpuAddr = node.TpuQuic // fallback for nodes that only advertise QUIC TPU
+				if node.TpuQuic != nil {
+					config.ActiveNodeTpuQuic = *node.TpuQuic
 				}
-				if tpuAddr != nil {
-					config.ActiveNodeTPU = *tpuAddr
-					host, _, err := net.SplitHostPort(*tpuAddr)
+				if node.TPU != nil {
+					config.ActiveNodeTPU = *node.TPU
+				}
+				if config.ActiveNodeTpuQuic != "" || config.ActiveNodeTPU != "" {
+					activePassed = true
+					probeAddr := config.ActiveNodeTpuQuic
+					if probeAddr == "" {
+						probeAddr = config.ActiveNodeTPU
+					}
+					host, _, err := net.SplitHostPort(probeAddr)
 					if err == nil {
 						config.ActiveNodeIP = host
 					}
 				} else {
-					activePassed = false
 					activeErrMsg = "Active node found in gossip but has no TPU address (neither tpu nor tpuQuic advertised)"
 				}
 				break
@@ -898,29 +904,17 @@ func monitorVoteAccount(ctx context.Context, checker *health.Checker, config *Co
 	}
 }
 
-// probeTPU checks if the active node's TPU port is reachable via TCP
-func probeTPU(address string) bool {
-	if address == "" {
-		return false
-	}
-	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
-
 // fenceActiveNode attempts to fence the active node before failover.
 // Returns (true, nil) if safe to proceed with failover.
 // Returns (false, error) if fencing failed and failover must be aborted.
 func fenceActiveNode(config *Config) (bool, error) {
-	log.Println("Phase 1: Checking active node liveness via TPU port...")
+	probeLabel := tpu.ProbeLabel(config.ActiveNodeTpuQuic, config.ActiveNodeTPU)
+	log.Printf("Phase 1: Checking active node liveness via %s...", probeLabel)
 
-	alive := probeTPU(config.ActiveNodeTPU)
+	alive := tpu.Probe(config.ActiveNodeTpuQuic, config.ActiveNodeTPU)
 
 	if !alive {
-		log.Printf("Active node TPU (%s) is UNREACHABLE - validator appears to be down", config.ActiveNodeTPU)
+		log.Printf("Active node %s is UNREACHABLE - validator appears to be down", probeLabel)
 
 		// Best-effort: try SSH fencing anyway
 		if config.FencingConfigured {
@@ -942,11 +936,11 @@ func fenceActiveNode(config *Config) (bool, error) {
 	}
 
 	// Validator is ALIVE - must fence via SSH
-	log.Printf("Active node TPU (%s) is REACHABLE - validator is still running!", config.ActiveNodeTPU)
+	log.Printf("Active node %s is REACHABLE - validator is still running!", probeLabel)
 	log.Println("SSH fencing is REQUIRED before failover can proceed")
 
 	if !config.FencingConfigured {
-		return false, fmt.Errorf("active validator is alive (TPU reachable at %s) but SSH fencing is not configured", config.ActiveNodeTPU)
+		return false, fmt.Errorf("active validator is alive (%s reachable) but SSH fencing is not configured", probeLabel)
 	}
 
 	// Try SSH fencing with retries
@@ -957,8 +951,8 @@ func fenceActiveNode(config *Config) (bool, error) {
 			time.Sleep(5 * time.Second)
 
 			// Re-check TPU - maybe node went down during the wait
-			if !probeTPU(config.ActiveNodeTPU) {
-				log.Println("Active node TPU became unreachable during retry wait - safe to proceed")
+			if !tpu.Probe(config.ActiveNodeTpuQuic, config.ActiveNodeTPU) {
+				log.Printf("Active node %s became unreachable during retry wait - safe to proceed", probeLabel)
 				return true, nil
 			}
 		}

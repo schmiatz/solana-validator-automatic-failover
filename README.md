@@ -156,7 +156,7 @@ The client runs on both **active** and **standby** validator nodes, automaticall
    - Monitors vote latency threshold (if `--max-vote-latency` is set)
    - Issue detected → retries `retry-count` times (1s apart) → triggers failover
 
-At startup, the tool resolves the **active validator identity** from the vote account (`nodePubkey` in `getVoteAccounts`) and finds that pubkey in `getClusterNodes` to obtain the **TPU address** (`tpu` or `tpuQuic`) for Phase 1 liveness checks and SSH auto-detection. These values are not refreshed on each failover trigger.
+At startup, the tool resolves the **active validator identity** from the vote account (`nodePubkey` in `getVoteAccounts`) and finds that pubkey in `getClusterNodes` to obtain **tpuQuic** and/or **tpu** for Phase 1 liveness checks and SSH auto-detection. These values are not refreshed on each failover trigger.
 
 ### Vote latency failover path
 
@@ -182,7 +182,8 @@ When failover is triggered:
 1. **Pre-failover hook** (if configured): Runs custom command. Non-zero exit **aborts** the failover.
 
 2. **Phase 1 — Fence the active node (STONITH)**:
-   - TCP connect to the active node's **TPU** address from startup gossip (`tpu` or `tpuQuic`, 2s timeout)
+   - **tpuQuic** advertised → QUIC handshake (`solana-tpu` ALPN, 2s timeout)
+   - else **tpu** → UDP probe (2s timeout)
    - If **TPU unreachable**: safe to proceed; best-effort SSH `set-identity` to unstaked key + optional tower copy if SSH is configured
    - If **TPU reachable**: **SSH fencing required** (if not configured → failover **aborted**)
    - When SSH is required: `1 + --ssh-retries` attempts (default 3 total); **5s** between retries, then **TPU re-probe** — if TPU went down during the wait, proceed without further SSH

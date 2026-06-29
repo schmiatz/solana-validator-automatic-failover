@@ -59,6 +59,7 @@ remote-ssh = "sol@10.0.0.1"
 ssh-key = "/home/sol/.ssh/id_ed25519"
 ssh-port = 22
 ssh-timeout = 5
+ssh-command-timeout = 3
 ssh-retries = 2
 
 # Unstaked keypair path on the ACTIVE node (switched to during fencing).

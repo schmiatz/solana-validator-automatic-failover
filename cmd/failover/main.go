@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -45,6 +46,7 @@ type TOMLConfig struct {
 	RemoteFdctlBin        string `toml:"remote-fdctl-bin"`
 	RemoteAgaveBin        string `toml:"remote-agave-bin"`
 	SSHTimeout            int    `toml:"ssh-timeout"`
+	SSHCommandTimeout     int    `toml:"ssh-command-timeout"`
 	SSHRetries            int    `toml:"ssh-retries"`
 	PreFailoverHook       string `toml:"pre-failover-hook"`
 	PostFailoverHook      string `toml:"post-failover-hook"`
@@ -87,6 +89,7 @@ func applyTOMLConfig(config *Config, t *TOMLConfig) {
 	setStr(&config.RemoteFdctlBin, t.RemoteFdctlBin)
 	setStr(&config.RemoteAgaveBin, t.RemoteAgaveBin)
 	setInt(&config.SSHTimeout, t.SSHTimeout)
+	setInt(&config.SSHCommandTimeout, t.SSHCommandTimeout)
 	setInt(&config.SSHRetries, t.SSHRetries)
 	setStr(&config.PreFailoverHook, t.PreFailoverHook)
 	setStr(&config.PostFailoverHook, t.PostFailoverHook)
@@ -116,7 +119,8 @@ type Config struct {
 	RemoteFdctlConfig     string // Fdctl config path on active node
 	RemoteFdctlBin        string // Full path to fdctl on active node (optional)
 	RemoteAgaveBin        string // Full path to agave-validator on active node (optional)
-	SSHTimeout            int    // SSH connection timeout in seconds
+	SSHTimeout            int    // SSH ConnectTimeout in seconds
+	SSHCommandTimeout     int    // Max seconds for entire SSH/SCP remote command
 	SSHRetries            int    // SSH retry count when active node is alive
 	FencingConfigured     bool   // Whether SSH fencing is fully configured
 	ActiveNodeTpuQuic     string // tpuQuic address from gossip (QUIC probe)
@@ -152,7 +156,8 @@ func main() {
 	remoteFdctlConfig := flag.String("remote-fdctl-config", "", "fdctl config path on active node (Frankendancer)")
 	remoteFdctlBin := flag.String("remote-fdctl-bin", "", "Full path to fdctl on active node (if not on default SSH PATH)")
 	remoteAgaveBin := flag.String("remote-agave-bin", "", "Full path to agave-validator on active node (if not on default SSH PATH)")
-	sshTimeout := flag.Int("ssh-timeout", 0, "SSH connection timeout in seconds (default: 5)")
+	sshTimeout := flag.Int("ssh-timeout", 0, "SSH ConnectTimeout in seconds (default: 5)")
+	sshCommandTimeout := flag.Int("ssh-command-timeout", 0, "Max seconds for SSH/SCP remote commands (default: 3)")
 	sshRetries := flag.Int("ssh-retries", 0, "SSH retry count when active node is alive (default: 2)")
 	preFailoverHook := flag.String("pre-failover-hook", "", "Bash command to run before failover (non-zero exit aborts failover)")
 	postFailoverHook := flag.String("post-failover-hook", "", "Bash command to run after successful failover (best-effort)")
@@ -169,9 +174,10 @@ func main() {
 	config := Config{
 		LocalRPCEndpoint: "http://127.0.0.1:8899",
 		RetryCount:       3,
-		SSHPort:          22,
-		SSHTimeout:       5,
-		SSHRetries:       2,
+		SSHPort:           22,
+		SSHTimeout:        5,
+		SSHCommandTimeout: 3,
+		SSHRetries:        2,
 	}
 
 	// Load TOML config if provided
@@ -234,6 +240,9 @@ func main() {
 	}
 	if flagsSet["ssh-timeout"] {
 		config.SSHTimeout = *sshTimeout
+	}
+	if flagsSet["ssh-command-timeout"] {
+		config.SSHCommandTimeout = *sshCommandTimeout
 	}
 	if flagsSet["ssh-retries"] {
 		config.SSHRetries = *sshRetries
@@ -916,12 +925,12 @@ func fenceActiveNode(config *Config) (bool, error) {
 	if !alive {
 		log.Printf("Active node %s is UNREACHABLE - validator appears to be down", probeLabel)
 
-		// Best-effort: try SSH fencing anyway
+		// Best-effort: try SSH fencing anyway (times out quickly if node is down)
 		if config.FencingConfigured {
 			log.Println("Attempting best-effort SSH fencing...")
 			output, err := sshSetIdentity(config)
 			if err != nil {
-				log.Printf("SSH fencing failed (expected if node is down): %v", err)
+				log.Printf("SSH fencing failed or timed out (expected if node is down): %v", err)
 			} else {
 				log.Printf("SSH fencing succeeded: %s", strings.TrimSpace(output))
 				// Try to copy tower file since SSH works
@@ -1120,15 +1129,30 @@ func resolveRemoteBinaries(config *Config) {
 	}
 }
 
+// sshCommandTimeoutDuration returns the max wall time for SSH/SCP operations.
+func (config *Config) sshCommandTimeoutDuration() time.Duration {
+	if config.SSHCommandTimeout > 0 {
+		return time.Duration(config.SSHCommandTimeout) * time.Second
+	}
+	return 3 * time.Second
+}
+
 // sshExec runs a command on the remote host via a non-interactive login shell.
 // Do not use bash -i over SSH without a TTY — it writes job-control errors to stdout.
 func sshExec(config *Config, command string) (string, error) {
+	timeout := config.sshCommandTimeoutDuration()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	args := sshOptions(config, "-p")
 	remoteCmd := "bash -l -c " + shellQuote(command)
 	args = append(args, config.RemoteSSH, remoteCmd)
 
-	cmd := exec.Command("ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	output, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return string(output), fmt.Errorf("SSH command timed out after %s", timeout)
+	}
 	return string(output), err
 }
 
@@ -1161,12 +1185,19 @@ func copyTowerFile(config *Config) error {
 
 	log.Printf("Copying tower file: %s", towerFileName)
 
+	timeout := config.sshCommandTimeoutDuration()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	args := sshOptions(config, "-P")
 	source := fmt.Sprintf("%s:%s", config.RemoteSSH, remotePath)
 	args = append(args, source, localPath)
 
-	cmd := exec.Command("scp", args...)
+	cmd := exec.CommandContext(ctx, "scp", args...)
 	output, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("scp timed out after %s", timeout)
+	}
 	if err != nil {
 		return fmt.Errorf("scp failed: %v, output: %s", err, strings.TrimSpace(string(output)))
 	}

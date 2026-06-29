@@ -27,7 +27,23 @@ go build -o bin/failover ./cmd/failover
 ./bin/failover --votepubkey <VOTE_PUBKEY> --identity-keypair <PATH> --ledger <PATH>
 ```
 
-See [example-config.toml](example-config.toml) for all available options with descriptions.
+See [example-config.toml](example-config.toml) for a full template. The config file is organized as:
+
+1. **Monitoring** — vote account, RPC, latency threshold, retry count  
+2. **Local host (standby)** — where this tool runs; pick **Agave** or **Frankendancer**  
+3. **Remote host (active)** — SSH fencing target; pick **Agave** or **Frankendancer**  
+4. **Hooks**, **alerting**, **logging** (optional)
+
+When SSH fencing is enabled, the **Tower** startup check requires **`ledger` + `remote-ledger`** on both sides (tower file copy is Agave-format), even if the spare or active validator runs Frankendancer.
+
+| Standby | Active | Local fields | Remote fields |
+|---------|--------|--------------|---------------|
+| Agave | Agave | `identity-keypair`, `ledger` | `remote-ledger` |
+| Agave | Frankendancer | `identity-keypair`, `ledger` | `remote-fdctl-config`, `remote-ledger` |
+| Frankendancer | Agave | `identity-keypair`, `fdctl-config`, `ledger` | `remote-ledger` |
+| Frankendancer | Frankendancer | `identity-keypair`, `fdctl-config`, `ledger` | `remote-fdctl-config`, `remote-ledger` |
+
+Fencing is fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` for Agave active **or** `remote-fdctl-config` for Frankendancer active) are all set. Without fencing, failover only proceeds when the active TPU is unreachable.
 
 ## Configuration
 
@@ -42,7 +58,7 @@ CLI flags always win over TOML values. TOML values override built-in defaults.
 | `--config` | No | - | Path to TOML configuration file |
 | `--votepubkey` | **Yes** | - | Vote account public key to monitor |
 | `--identity-keypair` | **Yes** | - | Path to staked identity keypair JSON file |
-| `--ledger` | **Agave** | - | Path to validator ledger directory |
+| `--ledger` | Agave; also FD + fencing | - | Validator ledger directory (Agave `set-identity`; tower copy destination on spare when fencing is on) |
 | `--fdctl-config` | **Frankendancer** | - | Path to fdctl config.toml |
 | `--rpc` | No | `http://127.0.0.1:8899` | Local RPC endpoint |
 | `--max-vote-latency` | No | `0` (delinquency only) | Trigger failover when this many slots behind |
@@ -58,16 +74,19 @@ Required for safe failover when the active validator is still alive. Without the
 | `--ssh-key` | No | System default | Path to SSH private key |
 | `--ssh-port` | No | `22` | SSH port |
 | `--remote-identity-keypair` | For fencing | - | Path to unstaked keypair on active node |
-| `--remote-ledger` | For Agave fencing | - | Ledger path on active node |
-| `--remote-fdctl-config` | For FD fencing | - | fdctl config path on active node |
+| `--remote-ledger` | For Agave active / tower copy | - | Ledger path on active node (also required for Tower check whenever fencing is on) |
+| `--remote-fdctl-config` | For FD active fencing | - | fdctl config path on active node |
 | `--remote-fdctl-bin` | No | - | Full path to `fdctl` on active node if not on SSH PATH |
 | `--remote-agave-bin` | No | - | Full path to `agave-validator` on active node if not on SSH PATH |
-| `--ssh-timeout` | No | `5` | SSH connection timeout in seconds |
+| `--ssh-timeout` | No | `5` | SSH `ConnectTimeout` in seconds |
+| `--ssh-command-timeout` | No | `3` | Max seconds for each SSH/SCP remote command (prevents hang when active node is down) |
 | `--ssh-retries` | No | `2` | Extra SSH attempts when active node TPU is still reachable (5s pause + TPU re-probe between retries) |
 
 Fencing is considered fully configured when `remote-ssh` + `remote-identity-keypair` + (`remote-ledger` or `remote-fdctl-config`) are all set.
 
-Remote SSH commands use **`bash -l -c`** (non-interactive). Firedancer **`fdctl`** is auto-discovered by probing **`~/firedancer/build/native/gcc/bin/fdctl`** (no PATH / `.bashrc` required). Set **`remote-fdctl-bin`** to override.
+Remote SSH commands use **`bash -l -c`** (non-interactive). Each SSH/SCP operation is capped by **`ssh-command-timeout`** (default 3s). If the active TPU is **reachable** but SSH fencing times out or fails, failover is **aborted** and an alert is sent. If the TPU is **unreachable**, a timed-out best-effort SSH fence is ignored and failover continues.
+
+Firedancer **`fdctl`** is auto-discovered by probing **`~/firedancer/build/native/gcc/bin/fdctl`** (no PATH / `.bashrc` required). Set **`remote-fdctl-bin`** to override.
 
 #### Hooks
 
@@ -126,14 +145,19 @@ Environment variables available in hooks:
   --pagerduty-key YOUR_KEY \
   --log /home/sol/failover.log
 
-# Frankendancer
+# Frankendancer spare + Frankendancer active (with tower copy)
 ./bin/failover \
+  --config /home/sol/failover.toml \
   --votepubkey DvAmv1VbS2GNaZiSwQjyyjQqx1UUR283HMrgh3Txh1DA \
   --identity-keypair /home/sol/staked-identity.json \
   --fdctl-config /home/sol/fdctl-config.toml \
-  --remote-ssh sol@10.0.0.1 \
+  --ledger /home/sol/ledger \
+  --remote-ssh sfadmin@10.0.0.1 \
+  --ssh-key /home/sol/.ssh/id_ed25519 \
   --remote-identity-keypair /home/sol/unstaked-identity.json \
-  --remote-fdctl-config /home/sol/fdctl-config.toml
+  --remote-fdctl-config /home/sol/fdctl-config.toml \
+  --remote-ledger /home/sol/ledger \
+  --remote-fdctl-bin /home/sfadmin/firedancer/build/native/gcc/bin/fdctl
 ```
 
 ---
@@ -142,21 +166,16 @@ Environment variables available in hooks:
 
 ### Overview
 
-The client runs on both **active** and **standby** validator nodes, automatically detecting which mode it's in.
+The client runs on the **standby (hot spare)** validator only. At startup it verifies the spare is **not** already running the staked identity.
 
-1. **Startup**: Health check, client detection, gossip verification, identity validation
-2. **Mode detection**: Compares local identity with vote account's `nodePubkey`
-   - Match → **ACTIVE mode** (this node is currently validating)
-   - No match → **STANDBY mode** (this node is a hot spare)
-3. **Identity verification**: Validates `--identity-keypair` based on mode
-   - **ACTIVE**: Keypair must be DIFFERENT from voting identity (unstaked keypair for stepping down)
-   - **STANDBY**: Keypair must MATCH the vote account's validator (staked keypair to take over)
-4. **Continuous monitoring**: Checks vote account status every second
+1. **Startup checks**: Health, gossip, PATH, client config, keypair, vote account, standby role, active node in gossip, SSH (if fencing), tower paths (if fencing)
+2. **Identity setup**: Local node must run an **unstaked** identity; `--identity-keypair` must be the **staked** key file used on failover (pubkey matches vote account `nodePubkey`)
+3. **Continuous monitoring**: Checks vote account status every second
    - Monitors for delinquency (always)
    - Monitors vote latency threshold (if `--max-vote-latency` is set)
    - Issue detected → retries `retry-count` times (1s apart) → triggers failover
 
-At startup, the tool resolves the **active validator identity** from the vote account (`nodePubkey` in `getVoteAccounts`) and finds that pubkey in `getClusterNodes` to obtain **tpuQuic** and/or **tpu** for Phase 1 liveness checks and SSH auto-detection. These values are not refreshed on each failover trigger.
+At startup, the tool resolves the active validator identity from the vote account (`nodePubkey` in `getVoteAccounts`) and finds that pubkey in `getClusterNodes` to obtain **`tpuQuic`** and/or **`tpu`** for Phase 1 liveness checks and SSH auto-detection (`user@gossip-ip`). These addresses are saved once and **not** refreshed on each failover trigger.
 
 ### Vote latency failover path
 
@@ -182,8 +201,21 @@ When failover is triggered:
 1. **Pre-failover hook** (if configured): Runs custom command. Non-zero exit **aborts** the failover.
 
 2. **Phase 1 — Fence the active node (STONITH)**:
-   - **tpuQuic** advertised → QUIC handshake (`solana-tpu` ALPN, 2s timeout)
-   - else **tpu** → UDP probe (2s timeout)
+
+   **TPU liveness probe** (2s timeout; Solana TPU ports are UDP/QUIC, not TCP):
+
+   | Gossip advertises | Probe used |
+   |-------------------|------------|
+   | `tpuQuic` | QUIC TLS handshake to `tpuQuic` (`solana-tpu` ALPN) |
+   | `tpu` only (no `tpuQuic`) | UDP probe to `tpu` |
+   | both | **QUIC on `tpuQuic` only** — legacy `tpu` is not used as fallback |
+
+   Example log when active validator is alive:
+   ```
+   Phase 1: Checking active node liveness via TPU QUIC 154.60.100.83:9007...
+   Active node TPU QUIC 154.60.100.83:9007 is REACHABLE - validator is still running!
+   ```
+
    - If **TPU unreachable**: safe to proceed; best-effort SSH `set-identity` to unstaked key + optional tower copy if SSH is configured
    - If **TPU reachable**: **SSH fencing required** (if not configured → failover **aborted**)
    - When SSH is required: `1 + --ssh-retries` attempts (default 3 total); **5s** between retries, then **TPU re-probe** — if TPU went down during the wait, proceed without further SSH
@@ -209,15 +241,15 @@ The tool performs these checks before starting monitoring:
 | Check | What it verifies |
 |-------|-----------------|
 | **Health** | Local node RPC is responding and caught up |
-| **Gossip** | Node appears in cluster gossip, TCP port reachable |
+| **Gossip** | Node appears in cluster gossip |
 | **PATH** | Required CLI tool (`agave-validator` or `fdctl`) is in PATH |
-| **Config/Ledger** | Configured path exists on disk |
-| **Keypair** | Identity keypair readable; pubkey matches vote account `nodePubkey` |
+| **Config/Ledger** | Agave: `--ledger`; Frankendancer: `--fdctl-config` |
+| **Keypair** | Staked identity keypair readable; pubkey matches vote account `nodePubkey` |
 | **Vote** | Vote account queryable via RPC |
-| **Standby** | Local identity ≠ vote `nodePubkey` (tool must run on hot spare) |
-| **Active** | Staked identity found in `getClusterNodes` (TPU/`tpuQuic` used for SSH IP hint) |
-| **SSH** | SSH connectivity and remote binary available (if fencing configured) |
-| **Tower** | `--ledger` and `--remote-ledger` set so `tower-1_9-<identity>.bin` can be SCP'd on failover (if fencing configured) |
+| **Standby** | Local `getIdentity` ≠ staked identity (tool must run on hot spare) |
+| **Active** | Staked identity found in `getClusterNodes`; `tpuQuic` / `tpu` saved for liveness probe |
+| **SSH** | SSH connectivity, remote binary, and unstaked `remote-identity-keypair` (if fencing configured) |
+| **Tower** | `--ledger` and `--remote-ledger` set (required whenever SSH fencing is configured) |
 
 All failed checks are printed before exit so you can fix everything in one pass.
 
@@ -316,10 +348,11 @@ Supported placeholders: `{transition}`, `{reason}`, `{status}`, `{error}`, `{vot
 ## Requirements
 
 - **Go 1.21+**
-- **Validator CLI in PATH**:
+- **Validator CLI in PATH** on the standby:
   - Agave: `agave-validator`
   - Frankendancer: `fdctl`
-- **SSH access** to active node (for STONITH fencing)
+- **SSH access** to the active node (for STONITH fencing when TPU is reachable)
+- **Build and run the same binary path** — e.g. `go build -o bin/failover ./cmd/failover` then `./bin/failover --config ...`
 
 ## Building
 
@@ -331,10 +364,11 @@ go build -o bin/failover ./cmd/failover
 
 ```
 automatic-failover/
-├── cmd/failover/main.go      # Core logic, CLI parsing, failover engine
+├── cmd/failover/main.go      # CLI, monitoring, failover engine, SSH fencing
 ├── internal/
 │   ├── rpc/client.go         # Solana JSON-RPC client
-│   └── health/checker.go     # Health checking logic
+│   ├── health/checker.go     # Health checking logic
+│   └── tpu/probe.go          # TPU liveness probe (QUIC / UDP)
 ├── example-config.toml       # Example TOML configuration with all options
-└── bin/failover              # Compiled binary
+└── bin/failover              # Compiled binary (recommended output path)
 ```
